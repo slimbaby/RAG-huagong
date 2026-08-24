@@ -1,0 +1,52 @@
+iteration_limits:
+  agent_max_iterations: 10
+  rag_max_retries: 3
+  llm_max_retries: 3
+  tool_max_retries: 2
+
+timeouts:
+  llm_call: 30
+  vector_search: 10
+  bm25_search: 5
+  rag_query_total: 120
+  file_parse_per_mb: 30
+  web_crawl: 60
+  agent_step: 60
+  agent_total: 300
+
+circuit_breaker:
+  enabled: true
+  failure_threshold: 5
+  recovery_timeout: 60
+  half_open_max_requests: 3
+  statistics_window: 300
+
+fallback:
+  llm_unavailable: "抱歉，AI服务暂时不可用，请稍后再试。"
+  retrieval_timeout: "知识库检索超时，请尝试简化您的问题。"
+  iteration_limit_exceeded: "您的问题较为复杂，系统处理超时。请尝试将问题拆分为多个小问题。"
+  enable_faq_fallback: true
+  enable_rule_fallback: true
+
+error_logging:
+  enabled: true
+  storage_path: "./logs/errors"
+  retention_days: 90
+  log_request_body: true
+  log_response_body: true
+  max_body_length: 10000
+  notification_enabled: true
+  notification_threshold: 3
+  notification_channels: []
+
+retry:
+  delay_strategy: "exponential"
+  base_delay: 1.0
+  max_delay: 30.0
+  backoff_factor: 2.0
+  jitter: true
+  retryable_exceptions:
+    - "TimeoutError"
+    - "ConnectionError"
+    - "RateLimitError"
+    - "ServiceUnavailableError"

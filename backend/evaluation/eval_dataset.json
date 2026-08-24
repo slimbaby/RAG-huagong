@@ -1,0 +1,105 @@
+[
+  {
+    "id": "single_fact_age",
+    "question": "王聪今年多大了",
+    "category": "单文档查询",
+    "difficulty": "easy",
+    "ground_truth": "31岁",
+    "expected_contains": ["31"],
+    "expected_source": "员工信息.xlsx",
+    "tags": ["事实查询", "员工信息"]
+  },
+  {
+    "id": "single_fact_table",
+    "question": "员工信息表里有哪些人",
+    "category": "单文档查询",
+    "difficulty": "easy",
+    "ground_truth": "张三、李四、赵五、王聪",
+    "expected_contains": ["张三", "李四", "赵五", "王聪"],
+    "expected_source": "员工信息.xlsx",
+    "tags": ["表格查询", "员工信息"]
+  },
+  {
+    "id": "multi_turn_reference",
+    "question": "赵五比前面提到姓王的员工小几岁",
+    "category": "多轮指代",
+    "difficulty": "hard",
+    "ground_truth": "13岁",
+    "expected_contains": ["13"],
+    "expected_source": "员工信息.xlsx",
+    "setup_questions": ["王聪今年多大了"],
+    "depends_on_session": true,
+    "tags": ["多轮", "指代推理"]
+  },
+  {
+    "id": "anti_hallucination",
+    "question": "那他俩和孟晓婉,谁最大?",
+    "category": "反幻觉",
+    "difficulty": "hard",
+    "ground_truth": "无法确定孟晓婉的年龄",
+    "expected_contains": ["无法确定", "不知道", "未找到", "不了解"],
+    "expected_not_contains": ["25岁", "24岁", "26岁"],
+    "setup_questions": ["王聪今年多大了", "赵五比前面提到姓王的员工小几岁"],
+    "depends_on_session": true,
+    "tags": ["反幻觉", "多轮"]
+  },
+  {
+    "id": "resume_info",
+    "question": "孟晓婉的工作经历是什么",
+    "category": "单文档查询",
+    "difficulty": "medium",
+    "ground_truth": "杭州海康威视数字技术股份有限公司，前端开发工程师/AI agent开发",
+    "expected_contains": ["海康威视", "前端开发"],
+    "expected_source": "孟晓婉简历",
+    "tags": ["简历查询"]
+  },
+  {
+    "id": "safety_distance",
+    "question": "化工园区的安全距离是多少",
+    "category": "单文档查询",
+    "difficulty": "medium",
+    "ground_truth": "根据相关法规和标准规定",
+    "expected_contains": ["安全距离"],
+    "tags": ["安全", "法规查询"]
+  },
+  {
+    "id": "leak_emergency",
+    "question": "液氯泄漏应该怎么处理",
+    "category": "单文档查询",
+    "difficulty": "medium",
+    "ground_truth": "启动碱液喷淋系统，穿戴A级防化服，使用专用堵漏工具",
+    "expected_contains": ["碱液", "防化服", "堵漏"],
+    "expected_source": "危险化学品泄漏现场处置方案",
+    "tags": ["应急处置", "安全"]
+  },
+  {
+    "id": "confined_space",
+    "question": "受限空间作业前需要做哪些准备",
+    "category": "单文档查询",
+    "difficulty": "medium",
+    "ground_truth": "危险有害因素识别、通风与气体检测、个体防护",
+    "expected_contains": ["气体检测", "通风"],
+    "expected_source": "受限空间作业安全操作规范",
+    "tags": ["作业安全"]
+  },
+  {
+    "id": "general_knowledge",
+    "question": "什么是化学反应",
+    "category": "通用知识",
+    "difficulty": "easy",
+    "ground_truth": "化学反应是物质发生化学变化的过程",
+    "expected_contains": ["化学"],
+    "tags": ["通用知识"]
+  },
+  {
+    "id": "multi_turn_compare",
+    "question": "谁的年纪大一些",
+    "category": "多轮指代",
+    "difficulty": "hard",
+    "ground_truth": "王聪年纪大，31岁；赵五18岁",
+    "expected_contains": ["王聪", "31"],
+    "setup_questions": ["王聪今年多大了", "赵五今年多大了"],
+    "depends_on_session": true,
+    "tags": ["多轮", "比较"]
+  }
+]

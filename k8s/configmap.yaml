@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chemical-rag-config
+  namespace: chemical-rag
+data:
+  # PostgreSQL
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "chemical_rag"
+  # Redis
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  # Milvus
+  MILVUS_HOST: "milvus"
+  MILVUS_PORT: "19530"
+  MILVUS_COLLECTION_NAME: "document_chunks"
+  # RAGFlow (disabled in K8s by default)
+  RAGFLOW_ENABLED: "false"
+  RAGFLOW_HOST: "ragflow"
+  RAGFLOW_PORT: "9380"
+  # App
+  APP_ENV: "production"
+  APP_DEBUG: "false"
+  LOG_LEVEL: "INFO"
+  # Model
+  PREMIUM_MODEL_NAME: "mimo-72b"
+  PREMIUM_MODEL_API_BASE_URL: "https://api.xiaomi.com/v1"
+  # Embedding
+  EMBEDDING_MODEL_NAME: "BAAI/bge-base-zh-v1.5"
+  EMBEDDING_DIMENSION: "768"
+  # Chunk
+  CHUNK_SIZE: "512"
+  CHUNK_OVERLAP: "50"
+  TOP_K_RESULTS: "5"

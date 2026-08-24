@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: eval-runner
+  namespace: chemical-rag
+  labels:
+    app: eval-runner
+spec:
+  schedule: "0 3 * * *"  # 每天凌晨 3 点
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1800  # 30 分钟超时
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: eval
+              image: chemical-rag-backend:latest
+              command:
+                - /app/.venv/bin/python
+                - /app/eval_runner.py
+                - --api-url
+                - http://backend:8000
+                - --no-gate
+              envFrom:
+                - configMapRef:
+                    name: chemical-rag-config
+                - secretRef:
+                    name: chemical-rag-secrets
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 1Gi

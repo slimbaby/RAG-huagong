@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Data
+uploads/
+bm25_index/
+law_archives/
+checkpoints/
+logs/
+*.jsonl
+*.pickle
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker/data/
+
+# Tools (portable git etc)
+tools/
+
+# Checkpoints & temp
+*.tmp
+*.bak
+.pytest_cache/

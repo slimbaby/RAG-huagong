@@ -1,0 +1,249 @@
+{
+  "eval_id": "eval_20260822_112608",
+  "timestamp": "2026-08-22T11:26:08.217954",
+  "total_cases": 10,
+  "passed_cases": 4,
+  "failed_cases": 6,
+  "avg_score": 7.73,
+  "dimension_scores": {
+    "rule_score": 8.4,
+    "ragas_faithfulness": 0.0,
+    "ragas_context_precision": 0.0,
+    "ragas_context_recall": 0.0,
+    "ragas_answer_relevancy": 0.0,
+    "hallucination_score": 6.7,
+    "citation_score": 8.0,
+    "consistency_score": 10.0,
+    "judge_score": 6.72
+  },
+  "gate_passed": true,
+  "gate_reasons": [],
+  "config": {
+    "api_url": "http://localhost:8000"
+  },
+  "case_results": [
+    {
+      "case_id": "single_fact_age",
+      "question": "王聪今年多大了",
+      "category": "单文档查询",
+      "difficulty": "easy",
+      "answer": "API调用失败: ",
+      "overall_score": 5.29,
+      "passed": false,
+      "fail_reasons": [
+        "总分 5.3 < 6.0",
+        "规则检查未通过: [\"答案未包含 ['31'] 中任一关键词\", '未引用期望来源 员工信息.xlsx']"
+      ],
+      "scores": {
+        "rule": 2.0,
+        "ragas_faithfulness": 0.0,
+        "ragas_context_precision": 0.0,
+        "ragas_context_recall": 0.0,
+        "ragas_answer_relevancy": 0.0,
+        "hallucination": 10.0,
+        "citation": 0.0,
+        "consistency": 10.0,
+        "judge": 3.4
+      }
+    },
+    {
+      "case_id": "single_fact_table",
+      "question": "员工信息表里有哪些人",
+      "category": "单文档查询",
+      "difficulty": "easy",
+      "answer": "抱歉，我目前的知识库中没有找到\"员工信息表\"相关的文档或数据，因此无法告诉您表里有哪些人。\n\n如果您需要查询员工信息，建议您：\n1. 直接访问相关的人力资源管理系统或数据库\n2. 联系相关部门获取最新的员工信息表\n\n如果您能提供相关的文档资料，我可以帮您进行分析和查询。\n\n「以上内容来自通用知识，非知识库文档」",
+      "overall_score": 6.02,
+      "passed": false,
+      "fail_reasons": [
+        "规则检查未通过: [\"答案未包含 ['张三', '李四', '赵五', '王聪'] 中任一关键词\", '未引用期望来源 员工信息.xlsx']"
+      ],
+      "scores": {
+        "rule": 2.0,
+        "ragas_faithfulness": 0.0,
+        "ragas_context_precision": 0.0,
+        "ragas_context_recall": 0.0,
+        "ragas_answer_relevancy": 0.0,
+        "hallucination": 10.0,
+        "citation": 0.0,
+        "consistency": 10.0,
+        "judge": 6.74
+      }
+    },
+    {
+      "case_id": "multi_turn_reference",
+      "question": "赵五比前面提到姓王的员工小几岁",
+      "category": "多轮指代",
+      "difficulty": "hard",
+      "answer": "根据员工信息表中的数据，赵五是18岁，王聪是31岁，因此赵五比王聪小13岁 [来源1: a6512056_员工信息.xlsx]。",
+      "overall_score": 6.65,
+      "passed": false,
+      "fail_reasons": [
+        "幻觉分 3.0 < 6.0"
+      ],
+      "scores": {
+        "rule": 10.0,
+        "ragas_faithfulness": 0.0,
+        "ragas_context_precision": 0.0,
+        "ragas_context_recall": 0.0,
+        "ragas_answer_relevancy": 0.0,
+        "hallucination": 3.0,
+        "citation": 10.0,
+        "consistency": 10,
+        "judge": 3.4
+      }
+    },
+    {
+      "case_id": "anti_hallucination",
+      "question": "那他俩和孟晓婉,谁最大?",
+      "category": "反幻觉",
+      "difficulty": "hard",
+      "answer": "根据参考资料，王聪31岁，赵五18岁，但**未提供孟晓婉的年龄信息**，因此无法确定他们三人中谁最大。\n\n「以上内容来自通用知识，非知识库文档」",
+      "overall_score": 8.81,
+      "passed": true,
+      "fail_reasons": [],
+      "scores": {
+        "rule": 10.0,
+        "ragas_faithfulness": 0.0,
+        "ragas_context_precision": 0.0,
+        "ragas_context_recall": 0.0,
+        "ragas_answer_relevancy": 0.0,
+        "hallucination": 10.0,
+        "citation": 10.0,
+        "consistency": 10,
+        "judge": 4.56
+      }
+    },
+    {
+      "case_id": "resume_info",
+      "question": "孟晓婉的工作经历是什么",
+      "category": "单文档查询",
+      "difficulty": "medium",
+      "answer": "孟晓婉的工作经历如下：\n\n1. **杭州海康威视数字技术股份有限公司**  \n   - **职位**：前端开发工程师/AI agent开发  \n   - **时间**：2021年5月 – 2026年5月  \n   - **主要职责**：  \n     - 近3年负责化工园区项目前端工程与AI Agent交付，包括客户需求调研、现场环境勘察、定制化部署方案设计等。  \n     - 基于Dify搭建",
+      "overall_score": 7.86,
+      "passed": false,
+      "fail_reasons": [
+        "幻觉分 3.0 < 6.0"
+      ],
+      "scores": {
+        "rule": 10.0,
+        "ragas_faithfulness": 0.0,
+        "ragas_context_precision": 0.0,
+        "ragas_context_recall": 0.0,
+        "ragas_answer_relevancy": 0.0,
+        "hallucination": 3.0,
+        "citation": 10.0,
+        "consistency": 10.0,
+        "judge": 8.93
+      }
+    },
+    {
+      "case_id": "safety_distance",
+      "question": "化工园区的安全距离是多少",
+      "category": "单文档查询",
+      "difficulty": "medium",
+      "answer": "关于化工园区的安全距离，**不存在一个全国统一的具体数值（如“XXX米）**。这是一个非常专业且需要具体问题具体分析的问题，其设定取决于众多复杂因素。\n\n核心原则是：**安全距离是通过科学的风险评估和定量计算确定的，而不是一个简单的固定数字。**\n\n以下是决定安全距离的关键因素和一般原则：\n\n1.  **危险源的性质与规模**：\n    *   **危险物质种类**：涉及易燃、易爆、有毒、腐蚀性等",
+      "overall_score": 9.8,
+      "passed": true,
+      "fail_reasons": [],
+      "scores": {
+        "rule": 10.0,
+        "ragas_faithfulness": 0.0,
+        "ragas_context_precision": 0.0,
+        "ragas_context_recall": 0.0,
+        "ragas_answer_relevancy": 0.0,
+        "hallucination": 10.0,
+        "citation": 10.0,
+        "consistency": 10.0,
+        "judge": 9.07
+      }
+    },
+    {
+      "case_id": "leak_emergency",
+      "question": "液氯泄漏应该怎么处理",
+      "category": "单文档查询",
+      "difficulty": "medium",
+      "answer": "根据知识库中的《危险化学品泄漏现场处置方案》（文件编号 XX-AQ-002，版本 A/0，发布于 2024-03-20 [来源4]），液氯泄漏的应急处置步骤如下：\n\n1.  **立即启动碱液喷淋系统**：用以中和泄漏出来的氯气 [来源1: 02_危险化学品泄漏现场处置方案.pdf, 第4页]。\n2.  **穿戴防护进入现场堵漏**：处置人员必须穿戴 **A级防化服**，并使用 **正压式空气呼吸器",
+      "overall_score": 8.24,
+      "passed": true,
+      "fail_reasons": [],
+      "scores": {
+        "rule": 10.0,
+        "ragas_faithfulness": 0.0,
+        "ragas_context_precision": 0.0,
+        "ragas_context_recall": 0.0,
+        "ragas_answer_relevancy": 0.0,
+        "hallucination": 6.0,
+        "citation": 10.0,
+        "consistency": 10.0,
+        "judge": 6.93
+      }
+    },
+    {
+      "case_id": "confined_space",
+      "question": "受限空间作业前需要做哪些准备",
+      "category": "单文档查询",
+      "difficulty": "medium",
+      "answer": "# 受限空间作业前的准备工作\n\n根据《受限空间作业安全操作规范》，作业前需要做好以下准备工作：\n\n## 一、危险有害因素识别 [来源1: 04_受限空间作业安全操作规范.pdf, 第2页]\n\n| 危险类别 | 具体危害 | 来源 | 控制措施 |\n|---------|---------|------|---------|\n| 缺氧窒息 | 氧含量<19.5% | 空间密闭、耗氧作业 | 强制通风",
+      "overall_score": 7.24,
+      "passed": false,
+      "fail_reasons": [
+        "幻觉分 1.0 < 6.0"
+      ],
+      "scores": {
+        "rule": 10.0,
+        "ragas_faithfulness": 0.0,
+        "ragas_context_precision": 0.0,
+        "ragas_context_recall": 0.0,
+        "ragas_answer_relevancy": 0.0,
+        "hallucination": 1.0,
+        "citation": 10.0,
+        "consistency": 10.0,
+        "judge": 8.59
+      }
+    },
+    {
+      "case_id": "general_knowledge",
+      "question": "什么是化学反应",
+      "category": "通用知识",
+      "difficulty": "easy",
+      "answer": "## 化学反应的定义\n\n**化学反应**是指物质之间发生化学变化，导致原有物质的化学组成和性质改变，生成一种或多种新物质的过程。\n\n---\n\n### 基本要素\n\n| 要素 | 说明 |\n|------|------|\n| **反应物** | 参与反应的原有物质 |\n| **生成物** | 反应后形成的新物质 |\n| **反应条件** | 如温度、压力、催化剂等 |\n\n---\n\n### 主要特征\n\n",
+      "overall_score": 9.92,
+      "passed": true,
+      "fail_reasons": [],
+      "scores": {
+        "rule": 10.0,
+        "ragas_faithfulness": 0.0,
+        "ragas_context_precision": 0.0,
+        "ragas_context_recall": 0.0,
+        "ragas_answer_relevancy": 0.0,
+        "hallucination": 10.0,
+        "citation": 10.0,
+        "consistency": 10.0,
+        "judge": 9.64
+      }
+    },
+    {
+      "case_id": "multi_turn_compare",
+      "question": "谁的年纪大一些",
+      "category": "多轮指代",
+      "difficulty": "hard",
+      "answer": "根据员工信息表：\n- 王聪今年**31岁**\n- 赵五今年**18岁**\n\n**王聪年纪大一些**，比赵五大13岁。[来源1: a6512056_员工信息.xlsx]",
+      "overall_score": 7.47,
+      "passed": false,
+      "fail_reasons": [
+        "幻觉分 4.0 < 6.0"
+      ],
+      "scores": {
+        "rule": 10.0,
+        "ragas_faithfulness": 0.0,
+        "ragas_context_precision": 0.0,
+        "ragas_context_recall": 0.0,
+        "ragas_answer_relevancy": 0.0,
+        "hallucination": 4.0,
+        "citation": 10.0,
+        "consistency": 10,
+        "judge": 5.9
+      }
+    }
+  ]
+}

@@ -1,0 +1,220 @@
+services:
+  # Milvus向量数据库
+  milvus:
+    image: milvusdb/milvus:v2.4.17
+    container_name: langgraph_rag_milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    environment:
+      - ETCD_USE_EMBED=true
+      - COMMON_STORAGETYPE=local
+    command: ["milvus", "run", "standalone"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
+  # Redis缓存
+  redis:
+    image: redis:7-alpine
+    container_name: langgraph_rag_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass infiniflow
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "infiniflow", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # PostgreSQL数据库 (LangGraph checkpointer)
+  postgres:
+    image: postgres:15-alpine
+    container_name: langgraph_rag_postgres
+    ports:
+      - "5434:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=your_password_here
+      - POSTGRES_DB=langgraph_checkpoints
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # RAGFlow依赖 - MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: langgraph_rag_mysql
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=infiniflow
+      - MYSQL_DATABASE=rag_flow
+      - MYSQL_USER=rag_flow
+      - MYSQL_PASSWORD=infiniflow
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --default-authentication-plugin=caching_sha2_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pinfiniflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # RAGFlow依赖 - Elasticsearch
+  es01:
+    image: elasticsearch:8.11.3
+    container_name: langgraph_rag_es
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
+  # RAGFlow依赖 - MinIO对象存储
+  minio:
+    image: minio/minio:RELEASE.2023-12-20T01-00-02Z
+    container_name: langgraph_rag_minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # RAGFlow文档解析服务
+  ragflow:
+    image: infiniflow/ragflow:latest
+    container_name: langgraph_rag_ragflow
+    ports:
+      - "9380:9380"
+      - "8080:80"
+    volumes:
+      - ragflow_data:/ragflow/data
+    environment:
+      - RAGFLOW_SECRET_KEY=langgraph-rag-secret-key
+      - API_PROXY_SCHEME=python
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=rag_flow
+      - MYSQL_PASSWORD=infiniflow
+      - MYSQL_DB=rag_flow
+      - ES_HOSTS=http://es01:9200
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=infiniflow
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    depends_on:
+      mysql:
+        condition: service_healthy
+      es01:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:9380/ | grep -qE '200|301|302|404'"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+
+  # 后端API服务 (LangGraph版)
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: langgraph_rag_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend/app:/app/app
+      - ../backend/eval_runner.py:/app/eval_runner.py
+      - ../backend/ragas_worker.py:/app/ragas_worker.py
+      - ../backend/migrate_eval_to_db.py:/app/migrate_eval_to_db.py
+      - ../backend/evaluation:/app/evaluation
+      - ../uploads:/app/uploads
+      - ../logs:/app/logs
+      - ../checkpoints:/app/checkpoints
+      - ../bm25_index:/app/bm25_index
+      - C:\Users\admin\.cache\huggingface:/root/.cache/huggingface
+    env_file:
+      - ../.env
+    environment:
+      - MILVUS_HOST=milvus
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=infiniflow
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=chemical_rag
+      - RAGFLOW_HOST=ragflow
+    depends_on:
+      milvus:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      ragflow:
+        condition: service_healthy
+    command: ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    restart: unless-stopped
+
+  # 前端开发服务器
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: langgraph_rag_frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000/api
+    command: npm run dev -- --host
+    restart: unless-stopped
+
+volumes:
+  milvus_data:
+  redis_data:
+  postgres_data:
+  ragflow_data:
+  es_data:
+  mysql_data:
+  minio_data:
