@@ -50,7 +50,11 @@ class CitationService:
                         time_info += f"，知识库更新: {meta['last_updated_at']}"
                 if meta.get("version"):
                     time_info += f"，版本: v{meta['version']}"
-            context_parts.append(f"--- {citation}{time_info} ---\n{chunk.get('content', '')}\n")
+            # 表格类型优先使用自然语言描述，避免 LLM 对 Markdown 表格过度推断
+            content = chunk.get('content', '')
+            if meta.get('content_type') == 'table' and chunk.get('table_nl_description'):
+                content = chunk['table_nl_description']
+            context_parts.append(f"--- {citation}{time_info} ---\n{content}\n")
         return "\n".join(context_parts)
 
     def parse_citations(self, answer: str, source_chunks: List[Dict]) -> Dict:

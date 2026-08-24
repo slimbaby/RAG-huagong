@@ -15,8 +15,12 @@ const navItems: NavItem[] = [
 const Sidebar: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { sessions, sessionId, createSession, switchSession, deleteSession } = useChatStore();
+  const { sessions, sessionId, createSession, switchSession, deleteSession, loadSessions } = useChatStore();
   const [hoveredSession, setHoveredSession] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/' || location.pathname === '/chat';

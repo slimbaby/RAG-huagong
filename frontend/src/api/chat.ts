@@ -85,3 +85,13 @@ export async function clearChatHistory(sessionId: string) {
   const response = await apiClient.delete(`/chat/history/${sessionId}`);
   return response.data;
 }
+
+export async function getSessions(limit: number = 50) {
+  const response = await apiClient.get('/chat/sessions', { params: { limit } });
+  return response.data;
+}
+
+export async function getSessionHistory(sessionId: string, limit: number = 60) {
+  const response = await apiClient.get(`/chat/history/${sessionId}`, { params: { limit } });
+  return response.data;
+}

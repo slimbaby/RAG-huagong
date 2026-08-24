@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { ChatMessage, StepProgress } from '../types';
 import { STEP_LABELS } from '../types';
-import { sendQuestion, sendQuestionStream } from '../api/chat';
+import { sendQuestion, sendQuestionStream, getSessions, getSessionHistory } from '../api/chat';
 
 export interface Session {
   id: string;
@@ -19,6 +19,7 @@ interface ChatState {
   abortController: AbortController | null;
   // 会话列表
   sessions: Session[];
+  sessionsLoaded: boolean;
   // 操作
   addMessage: (message: ChatMessage) => void;
   sendMessage: (question: string) => Promise<void>;
@@ -29,6 +30,7 @@ interface ChatState {
   createSession: () => string;
   switchSession: (sessionId: string) => void;
   deleteSession: (sessionId: string) => void;
+  loadSessions: () => Promise<void>;
 }
 
 const STORAGE_KEY = 'rag_chat_sessions';
@@ -97,6 +99,24 @@ const initSessions = (): { sessions: Session[]; currentId: string } => {
   return { sessions: [session], currentId: id };
 };
 
+// 从后端加载会话列表
+const fetchSessionsFromBackend = async (): Promise<Session[]> => {
+  try {
+    const data = await getSessions(50);
+    const backendSessions = (data.sessions || [])
+      .filter((s: any) => !s.session_id.startsWith('eval_') && !s.session_id.startsWith('test_'))
+      .map((s: any) => ({
+        id: s.session_id,
+        title: s.preview ? s.preview.slice(0, 20) + (s.preview.length > 20 ? '...' : '') : '新对话',
+        createdAt: s.last_active * 1000,
+        lastActive: s.last_active * 1000,
+      }));
+    return backendSessions;
+  } catch {
+    return [];
+  }
+};
+
 const init = initSessions();
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -106,6 +126,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   error: null,
   abortController: null,
   sessions: init.sessions,
+  sessionsLoaded: false,
 
   addMessage: (message: ChatMessage) => {
     set((state) => {
@@ -261,11 +282,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return newId;
   },
 
-  switchSession: (sessionId: string) => {
+  switchSession: async (sessionId: string) => {
     const { cancelRequest } = get();
     cancelRequest();
-    const messages = loadMessages(sessionId);
+    let messages = loadMessages(sessionId);
     set({ messages, sessionId, error: null, isLoading: false });
+    // 如果本地没有消息，从后端加载
+    if (messages.length === 0) {
+      try {
+        const data = await getSessionHistory(sessionId, 60);
+        if (data.history && data.history.length > 0) {
+          const backendMessages: ChatMessage[] = data.history.map((m: any, i: number) => ({
+            id: `${m.role}_${Date.now()}_${i}`,
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+            timestamp: new Date(m.timestamp * 1000),
+            citations: m.citations,
+          }));
+          saveMessages(sessionId, backendMessages);
+          set({ messages: backendMessages });
+        }
+      } catch {
+        // ignore
+      }
+    }
   },
 
   deleteSession: (sessionId: string) => {
@@ -286,6 +326,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return { messages: [], sessionId: newId, sessions: [newSession] };
       }
       return { sessions };
+    });
+  },
+
+  loadSessions: async () => {
+    if (get().sessionsLoaded) return;
+    const backendSessions = await fetchSessionsFromBackend();
+    if (backendSessions.length === 0) {
+      set({ sessionsLoaded: true });
+      return;
+    }
+    set((state) => {
+      const localIds = new Set(state.sessions.map(s => s.id));
+      const merged = [...state.sessions];
+      for (const bs of backendSessions) {
+        if (!localIds.has(bs.id)) {
+          merged.push(bs);
+        }
+      }
+      merged.sort((a, b) => b.lastActive - a.lastActive);
+      saveSessions(merged);
+      return { sessions: merged, sessionsLoaded: true };
     });
   },
 
