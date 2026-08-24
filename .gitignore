@@ -43,7 +43,7 @@ Thumbs.db
 docker/data/
 
 # Tools (portable git etc)
-tools/
+/tools/
 
 # Checkpoints & temp
 *.tmp
