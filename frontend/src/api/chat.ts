@@ -13,7 +13,7 @@ export async function sendQuestionStream(
   onDone: (response: ChatResponse) => void,
   onError: (error: string) => void,
 ): Promise<void> {
-  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
   const res = await fetch(`${baseURL}/chat/query/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
