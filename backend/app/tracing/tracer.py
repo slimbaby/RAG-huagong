@@ -189,16 +189,42 @@ class Tracer:
 
     def _persist_trace(self, trace: Trace):
         try:
+            # 摘要行（轻量字段）：写入每日索引文件，供列表接口快速加载
+            summary = {k: v for k, v in trace.__dict__.items() if k != "spans"}
+            summary["answer"] = (trace.answer or "")[:200]
             date_str = datetime.now().strftime("%Y-%m-%d")
             file_path = os.path.join(self.storage_path, f"traces_{date_str}.jsonl")
-            trace_data = {k: v for k, v in trace.__dict__.items() if k != "spans"}
-            trace_data["spans"] = [s.__dict__ for s in trace.spans]
             with open(file_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(trace_data, ensure_ascii=False, default=str) + "\n")
+                f.write(json.dumps(summary, ensure_ascii=False, default=str) + "\n")
+            # 完整数据（含 spans）：单独落盘，详情/火焰图按 trace_id O(1) 直读
+            details_dir = os.path.join(self.storage_path, "details")
+            os.makedirs(details_dir, exist_ok=True)
+            detail = dict(trace.__dict__)
+            detail["spans"] = [s.to_dict() if hasattr(s, "to_dict") else s for s in trace.spans]
+            detail_path = os.path.join(details_dir, f"{trace.trace_id}.json")
+            with open(detail_path, "w", encoding="utf-8") as f:
+                json.dump(detail, f, ensure_ascii=False, default=str)
         except Exception as e:
             logger.error(f"Failed to persist trace: {e}")
 
-    def _load_trace(self, trace_id: str) -> Optional[Trace]:
+    def load_detail_file(self, trace_id: str) -> Optional[Dict]:
+        """直接读取单条 trace 的完整详情文件（新格式）"""
+        detail_path = os.path.join(self.storage_path, "details", f"{trace_id}.json")
+        if not os.path.exists(detail_path):
+            return None
+        try:
+            with open(detail_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load trace detail {trace_id}: {e}")
+            return None
+
+    def _load_trace(self, trace_id: str) -> Optional[Dict]:
+        # 新格式：O(1) 直读详情文件
+        detail = self.load_detail_file(trace_id)
+        if detail is not None:
+            return detail
+        # 兼容旧格式（摘要与详情混在大文件里）：全量扫描兜底
         try:
             for filename in os.listdir(self.storage_path):
                 if filename.startswith("traces_") and filename.endswith(".jsonl"):
@@ -207,7 +233,7 @@ class Tracer:
                         for line in f:
                             data = json.loads(line)
                             if data.get("trace_id") == trace_id:
-                                return Trace(**{k: v for k, v in data.items() if k != "spans"})
+                                return data
         except Exception:
             pass
         return None

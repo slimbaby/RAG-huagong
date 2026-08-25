@@ -33,7 +33,6 @@ def get_deps():
             from ..core.model_config import ModelManager
             from ..services.embedding_service import EmbeddingService
 
-            rewriter = QueryRewriter()
             citation = CitationService()
 
             tracer = None
@@ -60,6 +59,8 @@ def get_deps():
             except Exception as e:
                 logger.warning(f"LLM初始化失败: {e}")
 
+            rewriter = QueryRewriter(llm_client=llm_client)
+
             embedding_service = None
             try:
                 model_manager = ModelManager.from_env()
@@ -84,19 +85,8 @@ def get_deps():
 
             store = None
             try:
-                from ..vectorstore.hybrid_store import HybridMilvusStore
-                from ..vectorstore.hnsw_index import HNSWConfig
-                from ..vectorstore.bm25_index import BM25Index
-                hnsw_config = HNSWConfig.from_config(settings)
-                bm25_index = BM25Index(index_path=getattr(settings, "BM25_INDEX_PATH", "./bm25_index"))
-                store = HybridMilvusStore(
-                    host=settings.MILVUS_HOST,
-                    port=settings.MILVUS_PORT,
-                    collection_name=settings.MILVUS_COLLECTION_NAME,
-                    hnsw_config=hnsw_config,
-                    bm25_index=bm25_index,
-                    embedding_service=embedding_service
-                )
+                from ..vectorstore.shared_store import get_shared_store
+                store = get_shared_store()
             except Exception as e:
                 logger.warning(f"Milvus连接失败: {e}")
 

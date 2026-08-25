@@ -3,6 +3,7 @@ Reranker服务 - 交叉编码器精排
 """
 
 from typing import List, Dict, Any, Optional
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ class RerankerService:
 
         try:
             pairs = [(query, doc) for doc in documents]
-            scores = self.model.predict(pairs)
+            scores = await asyncio.to_thread(self.model.predict, pairs)
             return [float(s) for s in scores]
         except Exception as e:
             logger.error(f"Reranker打分失败: {e}")

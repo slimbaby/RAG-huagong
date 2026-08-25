@@ -210,17 +210,8 @@ async def regenerate_eval_cases(doc_id: str):
     )
 
     # 获取文档 chunks
-    from ..vectorstore.hybrid_store import HybridMilvusStore
-    from ..vectorstore.hnsw_index import HNSWConfig
-    from ..vectorstore.bm25_index import BM25Index
-    from ..core.config import settings
-    hnsw_config = HNSWConfig.from_config(settings)
-    bm25_index = BM25Index(index_path=getattr(settings, "BM25_INDEX_PATH", "./bm25_index"))
-    store = HybridMilvusStore(
-        host=settings.MILVUS_HOST, port=settings.MILVUS_PORT,
-        collection_name=settings.MILVUS_COLLECTION_NAME,
-        hnsw_config=hnsw_config, bm25_index=bm25_index, embedding_service=None,
-    )
+    from ..vectorstore.shared_store import get_shared_store
+    store = get_shared_store()
     chunks = await store.query_by_file(filename)
     if not chunks:
         raise HTTPException(404, f"文档 {filename} 无索引数据")

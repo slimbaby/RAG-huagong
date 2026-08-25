@@ -7,6 +7,7 @@ import hashlib
 import math
 import os
 import time
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field, asdict
@@ -88,6 +89,7 @@ class MemoryManager:
 
         # 内存中的记忆缓存
         self._memories: Dict[str, Memory] = {}
+        self._memory_collection = None
         self._load_memories()
 
     # ============================================================
@@ -225,29 +227,71 @@ class MemoryManager:
             m.rank_score = relevance * time_decay * m.importance
         return sorted(memories, key=lambda m: getattr(m, 'rank_score', 0), reverse=True)
 
+    def _get_memory_collection(self, dim: int):
+        """惰性获取/创建记忆专用 collection。同步阻塞，必须在 worker 线程中调用"""
+        if self._memory_collection is not None:
+            return self._memory_collection
+
+        from pymilvus import Collection, FieldSchema, CollectionSchema, DataType, connections, utility
+
+        connections.connect(alias="default", host=self.milvus.host, port=self.milvus.port)
+        if utility.has_collection(self.collection_name):
+            col = Collection(self.collection_name)
+        else:
+            fields = [
+                FieldSchema("memory_id", DataType.VARCHAR, is_primary=True, max_length=64),
+                FieldSchema("vector", DataType.FLOAT_VECTOR, dim=dim),
+            ]
+            col = Collection(self.collection_name, CollectionSchema(fields))
+            col.create_index("vector", {
+                "index_type": "HNSW",
+                "metric_type": "COSINE",
+                "params": {"M": 16, "efConstruction": 128},
+            })
+            logger.info(f"已创建长期记忆collection: {self.collection_name} (dim={dim})")
+        col.load()
+        self._memory_collection = col
+        return col
+
     async def _search_similar_memories(self, vector: List[float], top_k: int = 5) -> List[Dict]:
         """在 Milvus 中搜索相似记忆向量"""
         if not self.milvus:
             return []
+
+        def _do():
+            col = self._get_memory_collection(len(vector))
+            results = col.search(
+                data=[vector],
+                anns_field="vector",
+                param={"metric_type": "COSINE", "params": {"ef": 64}},
+                limit=top_k,
+                output_fields=["memory_id"],
+            )
+            out = []
+            for hits in results:
+                for hit in hits:
+                    out.append({
+                        "memory_id": hit.entity.get("memory_id"),
+                        "score": float(hit.score),
+                    })
+            return out
+
         try:
-            # 复用 hybrid_store 的向量搜索能力
-            if hasattr(self.milvus, 'vector_search'):
-                results = await self.milvus.vector_search(
-                    collection_name=self.collection_name,
-                    query_vector=vector,
-                    top_k=top_k,
-                )
-                return [{"memory_id": r.get("metadata", {}).get("memory_id", ""), "score": r.get("score", 0)} for r in results]
-            return []
+            return await asyncio.to_thread(_do)
         except Exception as e:
             logger.warning(f"Milvus 记忆搜索失败: {e}")
             return []
 
     async def _insert_memory_vector(self, memory_id: str, vector: List[float]) -> str:
         """将记忆向量插入 Milvus"""
-        # 简化实现：如果 Milvus 不支持直接插入，跳过
-        # 完整实现需要创建 conversation_memories collection
-        logger.debug(f"记忆向量插入: {memory_id} (向量维度: {len(vector)})")
+
+        def _do():
+            col = self._get_memory_collection(len(vector))
+            col.insert([[memory_id], [vector]])
+            col.flush()
+
+        await asyncio.to_thread(_do)
+        logger.debug(f"记忆向量已写入: {memory_id} (dim={len(vector)})")
         return memory_id
 
     # ============================================================
@@ -404,8 +448,21 @@ class MemoryManager:
 
     async def _delete_memory_vector(self, vector_id: str):
         """从 Milvus 删除记忆向量"""
-        if self.milvus and hasattr(self.milvus, 'delete'):
-            await self.milvus.delete(collection_name=self.collection_name, ids=[vector_id])
+        if not self.milvus:
+            return
+
+        def _do():
+            from pymilvus import Collection, connections, utility
+            connections.connect(alias="default", host=self.milvus.host, port=self.milvus.port)
+            if not utility.has_collection(self.collection_name):
+                return
+            col = Collection(self.collection_name)
+            col.delete(f'memory_id == "{vector_id}"')
+            col.flush()
+            if self._memory_collection is not None:
+                self._memory_collection = None
+
+        await asyncio.to_thread(_do)
 
     # ============================================================
     # 持久化

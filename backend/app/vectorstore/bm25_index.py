@@ -101,7 +101,8 @@ class BM25Index:
 
     def save(self):
         os.makedirs(os.path.dirname(self.index_path) if os.path.dirname(self.index_path) else ".", exist_ok=True)
-        with open(self.index_path + ".pickle", "wb") as f:
+        tmp_path = self.index_path + ".pickle.tmp"
+        with open(tmp_path, "wb") as f:
             pickle.dump({
                 "inverted_index": dict(self.inverted_index),
                 "doc_stats": self.doc_stats,
@@ -109,6 +110,7 @@ class BM25Index:
                 "avg_doc_length": self.avg_doc_length,
                 "total_length": self._total_length,
             }, f)
+        os.replace(tmp_path, self.index_path + ".pickle")
 
     @classmethod
     def load(cls, index_path: str) -> "BM25Index":

@@ -12,6 +12,7 @@ class HNSWConfig:
     ef_search: int = 128
     max_elements: int = 1000000
     metric_type: str = "COSINE"
+    dimension: int = 768
 
     def to_milvus_params(self) -> dict:
         return {"M": self.M, "efConstruction": self.ef_construction}
@@ -26,4 +27,5 @@ class HNSWConfig:
             ef_construction=getattr(config, "HNSW_EF_CONSTRUCTION", 256),
             ef_search=getattr(config, "HNSW_EF_SEARCH", 128),
             metric_type=getattr(config, "HNSW_METRIC_TYPE", "COSINE"),
+            dimension=getattr(config, "EMBEDDING_DIMENSION", 768),
         )

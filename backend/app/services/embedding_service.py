@@ -3,6 +3,7 @@ Embedding服务 - 本地BGE模型
 """
 
 from typing import List
+import asyncio
 import logging
 import numpy as np
 
@@ -33,7 +34,9 @@ class EmbeddingService:
     async def embed_query(self, text: str) -> List[float]:
         try:
             query_text = f"为这个句子生成表示以用于检索相关文章：{text}"
-            embedding = self.model.encode(query_text, normalize_embeddings=True)
+            embedding = await asyncio.to_thread(
+                self.model.encode, query_text, normalize_embeddings=True
+            )
             return embedding.tolist()
         except Exception as e:
             logger.error(f"Embedding查询失败: {e}")
@@ -41,7 +44,12 @@ class EmbeddingService:
 
     async def embed_documents(self, texts: List[str]) -> List[List[float]]:
         try:
-            embeddings = self.model.encode(texts, normalize_embeddings=True, batch_size=self.config.batch_size, show_progress_bar=False)
+            embeddings = await asyncio.to_thread(
+                self.model.encode, texts,
+                normalize_embeddings=True,
+                batch_size=self.config.batch_size,
+                show_progress_bar=False,
+            )
             return embeddings.tolist()
         except Exception as e:
             logger.error(f"Embedding批量查询失败: {e}")

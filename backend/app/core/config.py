@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     # BM25配置
     BM25_K1: float = 1.5
     BM25_B: float = 0.75
-    BM25_INDEX_PATH: str = "./bm25_index"
+    BM25_INDEX_PATH: str = "./bm25_index/index"
 
     # 混合检索配置
     HYBRID_VECTOR_WEIGHT: float = 0.6
@@ -94,6 +94,14 @@ class Settings(BaseSettings):
     PREMIUM_MODEL_API_BASE_URL: str = "https://api.xiaomi.com/v1"
     PREMIUM_MODEL_TEMPERATURE: float = 0.7
     PREMIUM_MODEL_MAX_TOKENS: int = 4096
+    PREMIUM_MODEL_MAX_CONCURRENT: int = 10
+
+    STANDARD_MODEL_NAME: str = "mimo-v2.5-pro"
+    STANDARD_MODEL_API_KEY: str = ""
+    STANDARD_MODEL_API_BASE_URL: str = "https://token-plan-cn.xiaomimimo.com/v1"
+    STANDARD_MODEL_TEMPERATURE: float = 0.7
+    STANDARD_MODEL_MAX_TOKENS: int = 2048
+    STANDARD_MODEL_MAX_CONCURRENT: int = 50
 
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-base-zh-v1.5"
     EMBEDDING_API_KEY: str = ""

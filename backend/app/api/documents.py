@@ -121,16 +121,8 @@ async def _process_document(doc_id: str, file_path: str, file_ext: str, filename
 
         # 先删除旧的 Milvus 数据（按 doc_id），再重新索引
         try:
-            from ..vectorstore.hybrid_store import HybridMilvusStore
-            from ..vectorstore.hnsw_index import HNSWConfig
-            from ..vectorstore.bm25_index import BM25Index
-            hnsw_config = HNSWConfig.from_config(settings)
-            bm25_index = BM25Index(index_path=getattr(settings, "BM25_INDEX_PATH", "./bm25_index"))
-            store = HybridMilvusStore(
-                host=settings.MILVUS_HOST, port=settings.MILVUS_PORT,
-                collection_name=settings.MILVUS_COLLECTION_NAME,
-                hnsw_config=hnsw_config, bm25_index=bm25_index, embedding_service=None,
-            )
+            from ..vectorstore.shared_store import get_shared_store
+            store = get_shared_store()
             await store.delete_by_doc_id(doc_id)
         except Exception:
             pass
@@ -400,12 +392,10 @@ def _convert_ragflow_chunks(raw_chunks: list, source_file: str, file_type: str):
 
 
 async def _index_chunks(chunks, doc_id: str = ""):
-    from ..vectorstore.hybrid_store import HybridMilvusStore
-    from ..vectorstore.hnsw_index import HNSWConfig
-    from ..vectorstore.bm25_index import BM25Index
     from ..services.embedding_service import EmbeddingService
     from ..core.config import settings
     from ..core.model_config import ModelManager
+    from ..vectorstore.shared_store import get_shared_store
     if not chunks:
         logger.warning("没有需要索引的chunks")
         return
@@ -414,14 +404,7 @@ async def _index_chunks(chunks, doc_id: str = ""):
     if not embedding_config:
         raise ValueError("Embedding配置未找到")
     embedding_service = EmbeddingService(embedding_config)
-    hnsw_config = HNSWConfig.from_config(settings)
-    bm25_index = BM25Index(index_path=getattr(settings, "BM25_INDEX_PATH", "./bm25_index"))
-    store = HybridMilvusStore(
-        host=settings.MILVUS_HOST, port=settings.MILVUS_PORT,
-        collection_name=settings.MILVUS_COLLECTION_NAME,
-        hnsw_config=hnsw_config, bm25_index=bm25_index,
-        embedding_service=embedding_service
-    )
+    store = get_shared_store()
     texts = []
     valid_chunks = []
     for c in chunks:
@@ -530,18 +513,8 @@ async def delete_document(doc_id: str):
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
     try:
-        from ..vectorstore.hybrid_store import HybridMilvusStore
-        from ..vectorstore.hnsw_index import HNSWConfig
-        from ..vectorstore.bm25_index import BM25Index
-        from ..core.config import settings
-        hnsw_config = HNSWConfig.from_config(settings)
-        bm25_index = BM25Index(index_path=getattr(settings, "BM25_INDEX_PATH", "./bm25_index"))
-        store = HybridMilvusStore(
-            host=settings.MILVUS_HOST, port=settings.MILVUS_PORT,
-            collection_name=settings.MILVUS_COLLECTION_NAME,
-            hnsw_config=hnsw_config, bm25_index=bm25_index,
-            embedding_service=None
-        )
+        from ..vectorstore.shared_store import get_shared_store
+        store = get_shared_store()
         await store.delete_by_doc_id(doc_id)
     except Exception as e:
         logger.warning(f"删除Milvus数据失败: {e}")
@@ -627,18 +600,8 @@ async def get_document_chunks(doc_id: str):
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
     try:
-        from ..vectorstore.hybrid_store import HybridMilvusStore
-        from ..vectorstore.hnsw_index import HNSWConfig
-        from ..vectorstore.bm25_index import BM25Index
-        from ..core.config import settings
-        hnsw_config = HNSWConfig.from_config(settings)
-        bm25_index = BM25Index(index_path=getattr(settings, "BM25_INDEX_PATH", "./bm25_index"))
-        store = HybridMilvusStore(
-            host=settings.MILVUS_HOST, port=settings.MILVUS_PORT,
-            collection_name=settings.MILVUS_COLLECTION_NAME,
-            hnsw_config=hnsw_config, bm25_index=bm25_index,
-            embedding_service=None
-        )
+        from ..vectorstore.shared_store import get_shared_store
+        store = get_shared_store()
         chunks = await store.query_by_file(doc.get("filename", ""))
         return {"doc_id": doc_id, "chunks": chunks, "total": len(chunks)}
     except Exception as e:

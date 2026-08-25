@@ -62,7 +62,7 @@ class HybridMilvusStore:
 
         fields = [
             FieldSchema("chunk_id", DataType.VARCHAR, is_primary=True, max_length=64),
-            FieldSchema("vector", DataType.FLOAT_VECTOR, dim=self.hnsw_config.metric_type if hasattr(self.hnsw_config, 'dimension') else 768),
+            FieldSchema("vector", DataType.FLOAT_VECTOR, dim=self.hnsw_config.dimension),
             FieldSchema("content", DataType.VARCHAR, max_length=65535),
             FieldSchema("source_file", DataType.VARCHAR, max_length=512),
             FieldSchema("file_type", DataType.VARCHAR, max_length=32),
@@ -127,22 +127,29 @@ class HybridMilvusStore:
             ["active" for _ in chunks],
         ]
 
-        self.collection.insert(data)
-        self.collection.flush()
+        def _do_insert():
+            self.collection.insert(data)
+            self.collection.flush()
 
-        for c in chunks:
-            content = _get(c, "content", "")
-            nl_desc = _get_meta(c, "table_nl_description", "")
-            if nl_desc:
-                content += " " + nl_desc
-            self.bm25.add_document(_get(c, "chunk_id"), content, {"source_file": _get_meta(c, "source_file", "")})
+        await asyncio.to_thread(_do_insert)
+
+        def _do_bm25():
+            for c in chunks:
+                content = _get(c, "content", "")
+                nl_desc = _get_meta(c, "table_nl_description", "")
+                if nl_desc:
+                    content += " " + nl_desc
+                self.bm25.add_document(_get(c, "chunk_id"), content, {"source_file": _get_meta(c, "source_file", "")})
+            self._save_bm25()
+
+        await asyncio.to_thread(_do_bm25)
 
     async def hybrid_search(self, query: str, query_vector: List[float], top_k: int = 5, vector_weight: float = 0.6, bm25_weight: float = 0.4, fusion_method: str = "rrf") -> List[HybridSearchResult]:
         if not self._connected or not self.collection:
             await self.initialize()
         logger.info(f"[hybrid_search] query='{query}', query_vector={'有' if query_vector else '无'}, connected={self._connected}, collection={'有' if self.collection else '无'}")
         vector_results, bm25_results = await asyncio.gather(
-            self._vector_search(query_vector, top_k * 2),
+            asyncio.to_thread(self._vector_search, query_vector, top_k * 2),
             asyncio.to_thread(self._bm25_search, query, top_k * 2)
         )
         logger.info(f"[hybrid_search] vector_results={len(vector_results)}条, bm25_results={len(bm25_results)}条")
@@ -154,7 +161,7 @@ class HybridMilvusStore:
         else:
             return self._max_fusion(vector_results, bm25_results)[:top_k]
 
-    async def _vector_search(self, query_vector: List[float], top_k: int) -> List[Dict]:
+    def _vector_search(self, query_vector: List[float], top_k: int) -> List[Dict]:
         if not self._connected or not self.collection:
             logger.warning("[_vector_search] 未连接或collection为空")
             return []
@@ -304,12 +311,24 @@ class HybridMilvusStore:
             r.rank = i + 1
         return results
 
+    def _save_bm25(self):
+        try:
+            self.bm25.save()
+        except Exception as e:
+            logger.warning(f"BM25索引持久化失败: {e}")
+
     async def delete_by_file(self, source_file: str):
         if not self._connected or not self.collection:
             return
         try:
-            self.collection.delete(f'source_file == "{source_file}"')
-            self._rebuild_bm25_index()
+            expr = f'source_file == "{source_file}"'
+
+            def _do():
+                self.collection.delete(expr)
+                self.collection.flush()
+
+            await asyncio.to_thread(_do)
+            await asyncio.to_thread(self._rebuild_bm25_index)
         except Exception as e:
             logger.error(f"删除文档失败: {e}")
 
@@ -320,12 +339,44 @@ class HybridMilvusStore:
             if not self._connected or not self.collection:
                 return
         try:
-            self.collection.delete(f'doc_id == "{doc_id}"')
-            self.collection.flush()
-            self._rebuild_bm25_index()
+            expr = f'doc_id == "{doc_id}"'
+
+            def _do():
+                self.collection.delete(expr)
+                self.collection.flush()
+
+            await asyncio.to_thread(_do)
+            await asyncio.to_thread(self._rebuild_bm25_index)
             logger.info(f"已删除 doc_id={doc_id} 的所有 chunk")
         except Exception as e:
             logger.error(f"按doc_id删除文档失败: {e}")
+
+    async def query_by_file(self, source_file: str) -> List[Dict]:
+        """按源文件名查询全部 chunk（按 chunk_index 排序）"""
+        if not source_file:
+            return []
+        if not self._connected or not self.collection:
+            await self.initialize()
+            if not self._connected or not self.collection:
+                return []
+
+        expr = f'source_file == "{source_file}"'
+
+        def _do():
+            return self.collection.query(
+                expr=expr,
+                output_fields=["chunk_id", "content", "source_file", "file_type", "page_number",
+                               "line_start", "line_end", "content_type", "section_title",
+                               "table_nl_description", "chunk_index", "created_at"],
+            )
+
+        try:
+            rows = await asyncio.to_thread(_do) or []
+        except Exception as e:
+            logger.error(f"按文件查询chunks失败: {e}")
+            return []
+        rows.sort(key=lambda r: r.get("chunk_index", 0))
+        return rows
 
     def _rebuild_bm25_index(self):
         if not self._connected or not self.collection:
@@ -335,6 +386,7 @@ class HybridMilvusStore:
             self.bm25 = type(self.bm25)(k1=self.bm25.k1, b=self.bm25.b, index_path=self.bm25.index_path)
             for r in results:
                 self.bm25.add_document(r["chunk_id"], r["content"], {"source_file": r["source_file"]})
+            self._save_bm25()
         except Exception as e:
             logger.error(f"重建BM25索引失败: {e}")
 
