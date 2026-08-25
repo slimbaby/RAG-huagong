@@ -90,6 +90,7 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+      start_period: 90s   
     restart: unless-stopped
 
   # RAGFlow依赖 - MinIO对象存储
@@ -149,8 +150,8 @@ services:
       test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:9380/ | grep -qE '200|301|302|404'"]
       interval: 15s
       timeout: 10s
-      retries: 10
-      start_period: 120s
+      retries: 30
+      start_period: 300s
     restart: unless-stopped
 
   # 后端API服务 (LangGraph版)
