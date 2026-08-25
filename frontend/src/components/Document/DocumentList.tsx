@@ -101,16 +101,19 @@ const DocumentList: React.FC = () => {
         <Button icon={<ReloadOutlined />} onClick={fetchDocuments} loading={isLoading} style={styles.refreshBtn}>刷新</Button>
       </div>
       <input ref={fileInputRef} type="file" style={{ display: 'none' }} onChange={handleReuploadFile} />
-      <Table columns={columns} dataSource={documents} rowKey="doc_id" loading={isLoading} pagination={{ pageSize: 10 }} size="small" />
+      <div style={styles.tableWrapper}>
+        <Table columns={columns} dataSource={documents} rowKey="doc_id" loading={isLoading} pagination={{ pageSize: 10 }} size="small" scroll={{ y: '100%' }} />
+      </div>
     </div>
   );
 };
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { background: '#0D1525', border: '1px solid #1A2748', borderRadius: 12, padding: 20, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  container: { background: '#0D1525', border: '1px solid #1A2748', borderRadius: 12, padding: 20, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexShrink: 0 },
   headerTitle: { fontSize: 15, fontWeight: 600, color: '#E4EBF5', fontFamily: "'Inter', sans-serif" },
   refreshBtn: { background: 'transparent', border: '1px solid #1A2748', color: '#94A3B8', borderRadius: 8, fontFamily: "'Inter', sans-serif" },
+  tableWrapper: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
 };
 
 export default DocumentList;

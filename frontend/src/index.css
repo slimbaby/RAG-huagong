@@ -87,9 +87,18 @@ body {
 .ant-table-tbody > tr > td { background: transparent !important; color: var(--text-primary) !important; border-bottom: 1px solid var(--border-main) !important; font-size: var(--font-size-base) !important; }
 .ant-table-tbody > tr:hover > td { background: rgba(15, 25, 45, 0.6) !important; }
 .ant-table-wrapper { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.ant-table-wrapper .ant-table { flex: 1; }
-.ant-table-wrapper .ant-table-container { height: 100%; background: transparent !important; }
-.ant-table-wrapper .ant-table-cell { height: 100%; }
+.ant-table-wrapper .ant-spin-nested-loading { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ant-table-wrapper .ant-spin-container { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ant-table-wrapper .ant-table { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ant-table-wrapper .ant-table-container { display: flex; flex-direction: column; min-height: 0; background: transparent !important; }
+.ant-table-wrapper .ant-table-body { flex: 1; min-height: 0; max-height: none !important; overflow-y: auto !important; overflow-x: hidden !important; scrollbar-width: thin; scrollbar-color: transparent transparent; transition: scrollbar-color 0.25s ease; }
+.ant-table-wrapper .ant-table-body:hover { scrollbar-color: rgba(79, 140, 255, 0.45) transparent; }
+.ant-table-wrapper .ant-table-body::-webkit-scrollbar { width: 5px; height: 5px; }
+.ant-table-wrapper .ant-table-body::-webkit-scrollbar-track { background: transparent; }
+.ant-table-wrapper .ant-table-body::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
+.ant-table-wrapper .ant-table-body:hover::-webkit-scrollbar-thumb { background: rgba(79, 140, 255, 0.45); }
+.ant-table-wrapper .ant-table-body:hover::-webkit-scrollbar-thumb:hover { background: rgba(79, 140, 255, 0.7); }
+.ant-table-wrapper .ant-table-pagination { flex-shrink: 0; margin-top: 16px !important; }
 .ant-btn-default { background: var(--bg-card) !important; border: 1px solid var(--border-main) !important; color: var(--text-primary) !important; }
 .ant-btn-default:hover { border-color: var(--accent-blue) !important; color: var(--accent-blue) !important; }
 .ant-btn-primary { background: var(--gradient-btn) !important; border: none !important; color: var(--text-white) !important; font-weight: 600 !important; border-radius: var(--radius-md) !important; }

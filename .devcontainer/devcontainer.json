@@ -1,0 +1,7 @@
+{
+  "name": "RAG Frontend",
+  "dockerComposeFile": "${localWorkspaceFolder}/docker/docker-compose.yml",
+  "service": "frontend",
+  "workspaceFolder": "/app",
+  "shutdownAction": "none"
+}
