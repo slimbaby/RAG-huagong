@@ -13,8 +13,9 @@ logger = logging.getLogger(__name__)
 class LLMService:
     """LLM服务客户端"""
 
-    def __init__(self, api_key: str, base_url: str, model_name: str = "mimo-72b", temperature: float = 0.7, max_tokens: int = 4096):
-        self.client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+    def __init__(self, api_key: str, base_url: str, model_name: str = "mimo-72b", temperature: float = 0.7, max_tokens: int = 4096, timeout: float = 60.0):
+        # timeout 必须显式设置：openai SDK 默认 600s，慢供应商下单请求可挂死 10 分钟
+        self.client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
         self.model_name = model_name
         self.temperature = temperature
         self.max_tokens = max_tokens

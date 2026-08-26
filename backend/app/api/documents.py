@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 import os
+import re
 import uuid
 import json
 import hashlib
@@ -19,6 +20,22 @@ router = APIRouter()
 
 METADATA_FILE = "./uploads/metadata.json"
 CHECKPOINT_DIR = "./uploads/checkpoints"
+
+
+def _sanitize_filename(filename: str) -> str:
+    """清洗文件名：剥离路径部分和危险字符，防止路径遍历（如 ..\\..\\evil.pdf）。"""
+    name = os.path.basename(filename.replace("\\", "/"))
+    name = re.sub(r'[\\/:*?"<>|\r\n]+', "_", name).strip(". ")
+    return name or "unnamed"
+
+
+def _safe_upload_path(upload_dir: str, doc_id: str, filename: str) -> str:
+    """在 upload_dir 内生成安全的文件保存路径，并校验最终路径未逃逸出上传目录。"""
+    file_path = os.path.abspath(os.path.join(upload_dir, f"{doc_id}_{_sanitize_filename(filename)}"))
+    upload_dir_abs = os.path.abspath(upload_dir)
+    if not file_path.startswith(upload_dir_abs + os.sep):
+        raise HTTPException(status_code=400, detail="非法的文件名")
+    return file_path
 
 
 def _compute_file_hash(content: bytes) -> str:
@@ -120,12 +137,14 @@ async def _process_document(doc_id: str, file_path: str, file_ext: str, filename
             logger.info(f"本地解析完成，共 {len(chunks)} 个片段")
 
         # 先删除旧的 Milvus 数据（按 doc_id），再重新索引
+        # 删除失败必须中止：静默继续会导致新旧 chunk 并存、检索结果重复
         try:
             from ..vectorstore.shared_store import get_shared_store
             store = get_shared_store()
             await store.delete_by_doc_id(doc_id)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"删除旧索引失败 (doc_id={doc_id})，中止重新索引: {e}", exc_info=True)
+            raise RuntimeError(f"清理旧索引失败，已中止以避免数据重复: {e}") from e
 
         await _index_chunks(chunks, doc_id=doc_id)
         logger.info(f"文档已索引到知识库 (解析方式: {parse_method})")
@@ -216,6 +235,9 @@ async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = 
         raise HTTPException(status_code=400, detail=f"不支持的文件类型: {file_ext}")
     try:
         content = await file.read()
+        max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
+        if len(content) > max_bytes:
+            raise HTTPException(status_code=413, detail=f"文件超过大小限制 {settings.MAX_FILE_SIZE_MB}MB")
         file_hash = _compute_file_hash(content)
         checkpoint_path = _get_checkpoint_path(file_hash)
         meta = _load_metadata()
@@ -234,7 +256,7 @@ async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = 
             if not file_path or not os.path.exists(file_path):
                 upload_dir = settings.UPLOAD_DIR
                 os.makedirs(upload_dir, exist_ok=True)
-                file_path = os.path.join(upload_dir, f"{doc_id}_{file.filename}")
+                file_path = _safe_upload_path(upload_dir, doc_id, file.filename)
                 with open(file_path, "wb") as f:
                     f.write(content)
             meta[doc_id]["status"] = "processing"
@@ -246,7 +268,7 @@ async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = 
             doc_id = str(uuid.uuid4())[:8]
             upload_dir = settings.UPLOAD_DIR
             os.makedirs(upload_dir, exist_ok=True)
-            file_path = os.path.join(upload_dir, f"{doc_id}_{file.filename}")
+            file_path = _safe_upload_path(upload_dir, doc_id, file.filename)
             with open(file_path, "wb") as f:
                 f.write(content)
             meta[doc_id] = {
@@ -496,6 +518,7 @@ async def get_document(doc_id: str):
 
 @router.get("/{doc_id}/download", summary="下载文档")
 async def download_document(doc_id: str):
+    from ..core.config import settings
     meta = _load_metadata()
     doc = meta.get(doc_id)
     if not doc:
@@ -503,6 +526,10 @@ async def download_document(doc_id: str):
     file_path = doc.get("file_path")
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="文件不存在")
+    # 校验文件路径必须位于上传目录内，防止通过 metadata 中篡改的路径任意读文件
+    upload_dir_abs = os.path.abspath(settings.UPLOAD_DIR)
+    if not os.path.abspath(file_path).startswith(upload_dir_abs + os.sep):
+        raise HTTPException(status_code=403, detail="非法的文件路径")
     return FileResponse(path=file_path, filename=doc.get("filename", os.path.basename(file_path)), media_type="application/octet-stream")
 
 
@@ -553,6 +580,9 @@ async def reupload_document(doc_id: str, background_tasks: BackgroundTasks, file
 
     try:
         content = await file.read()
+        max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
+        if len(content) > max_bytes:
+            raise HTTPException(status_code=413, detail=f"文件超过大小限制 {settings.MAX_FILE_SIZE_MB}MB")
         file_hash = _compute_file_hash(content)
 
         # 删除旧文件
@@ -566,7 +596,7 @@ async def reupload_document(doc_id: str, background_tasks: BackgroundTasks, file
         # 保存新文件
         upload_dir = settings.UPLOAD_DIR
         os.makedirs(upload_dir, exist_ok=True)
-        file_path = os.path.join(upload_dir, f"{doc_id}_{file.filename}")
+        file_path = _safe_upload_path(upload_dir, doc_id, file.filename)
         with open(file_path, "wb") as f:
             f.write(content)
 

@@ -4,9 +4,32 @@ LangGraph节点函数 - RAG流程的各个步骤
 
 from typing import Dict, Any, List, Optional
 import logging
+import re
 import uuid
 
 logger = logging.getLogger(__name__)
+
+# 问题词停用表：从查询中剔除后，剩余分词视为实体候选（人名、机构名等）
+_QUESTION_WORDS = {
+    "来自", "哪里", "哪儿", "什么", "怎么", "怎样", "如何", "为什么", "是谁",
+    "哪位", "哪个", "哪些", "多少", "几岁", "多大", "属于", "请问", "告诉",
+    "介绍", "一下", "关于", "情况", "信息", "详细", "相关", "说明",
+}
+
+
+def _extract_entity_candidates(text: str) -> List[str]:
+    """从用户查询中提取实体候选词，用于实体精确命中兜底判断。"""
+    if not text:
+        return []
+    try:
+        import jieba
+        tokens = jieba.lcut(text)
+    except Exception:
+        tokens = re.findall(r"[一-龥A-Za-z0-9]{2,}", text)
+    return [
+        t for t in tokens
+        if len(t) >= 2 and t not in _QUESTION_WORDS and not t.startswith("哪")
+    ]
 
 
 async def query_optimize_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -360,8 +383,8 @@ async def check_retrieval_confidence_node(state: Dict[str, Any]) -> Dict[str, An
 
     if top_reranker_score > 0:
         # reranker 可用：用 reranker 分数判断
-        # cross-encoder 分数范围 0-1，人名/实体查询 0.3+ 即为有效匹配
-        confidence_threshold = 0.30
+        # cross-encoder 分数范围 0-1，表格行/短文本天然得分偏低，阈值不宜过高
+        confidence_threshold = 0.10
         top_score = top_reranker_score
         score_name = "reranker_score"
     else:
@@ -381,6 +404,16 @@ async def check_retrieval_confidence_node(state: Dict[str, Any]) -> Dict[str, An
         if has_reference:
             logger.info(f"[check_retrieval_confidence] {score_name}={top_score:.4f} < {confidence_threshold}，但检测到指代词，走知识库模式")
             return {"retrieval_confident": True}
+
+        # 实体精确命中兜底：查询中的实体词（如人名）在检索结果中逐字出现，
+        # 说明知识库确有相关内容，不应因 reranker 对表格类内容打分偏低而误杀
+        entities = _extract_entity_candidates(user_query)
+        if entities:
+            top_contents = [r.get("content", "") for r in filtered_results[:5]]
+            hit = [ent for ent in entities if any(ent in c for c in top_contents)]
+            if hit:
+                logger.info(f"[check_retrieval_confidence] {score_name}={top_score:.4f} < {confidence_threshold}，但实体 {hit} 在检索结果中精确命中，走知识库模式")
+                return {"retrieval_confident": True}
 
         logger.info(f"[check_retrieval_confidence] {score_name}={top_score:.4f} < {confidence_threshold}，标记为低置信度")
         return {"retrieval_confident": False}

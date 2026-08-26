@@ -4,8 +4,8 @@ services:
     image: milvusdb/milvus:v2.4.17
     container_name: langgraph_rag_milvus
     ports:
-      - "19530:19530"
-      - "9091:9091"
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:9091:9091"
     volumes:
       - milvus_data:/var/lib/milvus
     environment:
@@ -18,32 +18,34 @@ services:
       timeout: 20s
       retries: 3
     restart: unless-stopped
+    mem_limit: 4g
 
-  # Redis缓存
+  # Redis缓存（密码通过环境变量注入，默认保持原值，轮换时改 .env 或 shell 环境即可）
   redis:
     image: redis:7-alpine
     container_name: langgraph_rag_redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --requirepass infiniflow
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-infiniflow}
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "infiniflow", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:-infiniflow} ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    mem_limit: 256m
 
   # PostgreSQL数据库 (LangGraph checkpointer)
   postgres:
     image: postgres:15-alpine
     container_name: langgraph_rag_postgres
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=your_password_here
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-your_password_here}
       - POSTGRES_DB=langgraph_checkpoints
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -53,18 +55,19 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    mem_limit: 512m
 
   # RAGFlow依赖 - MySQL
   mysql:
     image: mysql:8.0
     container_name: langgraph_rag_mysql
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     environment:
-      - MYSQL_ROOT_PASSWORD=infiniflow
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-infiniflow}
       - MYSQL_DATABASE=rag_flow
       - MYSQL_USER=rag_flow
-      - MYSQL_PASSWORD=infiniflow
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-infiniflow}
     volumes:
       - mysql_data:/var/lib/mysql
     command: --default-authentication-plugin=caching_sha2_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
@@ -74,6 +77,7 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    mem_limit: 1g
 
   # RAGFlow依赖 - Elasticsearch
   es01:
@@ -92,17 +96,18 @@ services:
       retries: 3
       start_period: 90s   
     restart: unless-stopped
+    mem_limit: 1g
 
   # RAGFlow依赖 - MinIO对象存储
   minio:
     image: minio/minio:RELEASE.2023-12-20T01-00-02Z
     container_name: langgraph_rag_minio
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
@@ -112,31 +117,32 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    mem_limit: 512m
 
-  # RAGFlow文档解析服务
+  # RAGFlow文档解析服务（按 digest 固定版本，避免 latest 漂移）
   ragflow:
-    image: infiniflow/ragflow:latest
+    image: infiniflow/ragflow@sha256:1e30a70b9bad79b9ef1949453d06d84411d5bf829002bc821e525e04d956c18c
     container_name: langgraph_rag_ragflow
     ports:
-      - "9380:9380"
-      - "8080:80"
+      - "127.0.0.1:9380:9380"
+      - "127.0.0.1:8080:80"
     volumes:
       - ragflow_data:/ragflow/data
     environment:
-      - RAGFLOW_SECRET_KEY=langgraph-rag-secret-key
+      - RAGFLOW_SECRET_KEY=${RAGFLOW_SECRET_KEY:-langgraph-rag-secret-key}
       - API_PROXY_SCHEME=python
       - MYSQL_HOST=mysql
       - MYSQL_PORT=3306
       - MYSQL_USER=rag_flow
-      - MYSQL_PASSWORD=infiniflow
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-infiniflow}
       - MYSQL_DB=rag_flow
       - ES_HOSTS=http://es01:9200
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=infiniflow
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-infiniflow}
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
     depends_on:
       mysql:
         condition: service_healthy
@@ -161,7 +167,7 @@ services:
       dockerfile: Dockerfile
     container_name: langgraph_rag_backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ../backend/app:/app/app
       - ../backend/eval_runner.py:/app/eval_runner.py
@@ -192,17 +198,25 @@ services:
         condition: service_healthy
       ragflow:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
     command: ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     restart: unless-stopped
+    mem_limit: 4g
 
   # 前端开发服务器
   frontend:
     build:
       context: ../frontend
       dockerfile: Dockerfile
+      target: dev
     container_name: langgraph_rag_frontend
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     volumes:
       - ../frontend:/app
       - /app/node_modules

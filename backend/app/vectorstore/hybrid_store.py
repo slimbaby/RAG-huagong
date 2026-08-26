@@ -382,10 +382,40 @@ class HybridMilvusStore:
         if not self._connected or not self.collection:
             return
         try:
-            results = self.collection.query(expr="", output_fields=["chunk_id", "content", "source_file"], limit=10000)
             self.bm25 = type(self.bm25)(k1=self.bm25.k1, b=self.bm25.b, index_path=self.bm25.index_path)
-            for r in results:
-                self.bm25.add_document(r["chunk_id"], r["content"], {"source_file": r["source_file"]})
+            total = 0
+            # 用 query_iterator 分批拉取全量数据：单次 query(limit=10000) 超量会静默截断，
+            # 导致 BM25 与 Milvus 永久不一致
+            try:
+                iterator = self.collection.query_iterator(
+                    batch_size=1000, expr="",
+                    output_fields=["chunk_id", "content", "source_file"],
+                )
+                while True:
+                    batch = iterator.next()
+                    if not batch:
+                        break
+                    for r in batch:
+                        self.bm25.add_document(r["chunk_id"], r["content"], {"source_file": r["source_file"]})
+                    total += len(batch)
+                iterator.close()
+            except (AttributeError, TypeError):
+                # 旧版 pymilvus 无 query_iterator，退化为 offset 分页
+                page_size, offset = 1000, 0
+                while True:
+                    rows = self.collection.query(
+                        expr="", output_fields=["chunk_id", "content", "source_file"],
+                        limit=page_size, offset=offset,
+                    )
+                    if not rows:
+                        break
+                    for r in rows:
+                        self.bm25.add_document(r["chunk_id"], r["content"], {"source_file": r["source_file"]})
+                    total += len(rows)
+                    offset += page_size
+                    if len(rows) < page_size:
+                        break
+            logger.info(f"BM25索引重建完成，共 {total} 条")
             self._save_bm25()
         except Exception as e:
             logger.error(f"重建BM25索引失败: {e}")

@@ -93,6 +93,11 @@ root_logger.addHandler(console_handler)
 root_logger.addHandler(file_handler)
 root_logger.addHandler(json_handler)
 
+# 第三方库日志降噪：openai/httpx 的 DEBUG 日志会记录完整请求体（含对话内容和密钥头），
+# 无论 APP_DEBUG 是否开启都强制压制到 WARNING，防止敏感信息落盘
+for _noisy in ("openai", "httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 logger.info("日志系统初始化完成")
 
@@ -106,9 +111,11 @@ app = FastAPI(
 
 from .core.config import settings
 
+# CORS 白名单：来自配置（.env 的 CORS_ORIGINS），禁止对任意来源开放带凭证访问
+_cors_origins = [o for o in settings.CORS_ORIGINS if o] or ["http://localhost:5173"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

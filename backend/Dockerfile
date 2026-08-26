@@ -31,4 +31,5 @@ EXPOSE 8000
 
 ENV PYTHONDONTWRITEBYTECODE=1
 
-CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# 开发热重载由 docker-compose 的 command 覆盖提供，镜像默认不带 --reload
+CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

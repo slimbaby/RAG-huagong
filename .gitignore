@@ -26,6 +26,9 @@ frontend/dist/
 .env.local
 .env.production
 
+# Kubernetes secrets（含敏感信息，只提交 example 模板）
+k8s/secrets.yaml
+
 # Data
 uploads/
 bm25_index/

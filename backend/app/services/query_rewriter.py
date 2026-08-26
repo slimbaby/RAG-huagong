@@ -5,6 +5,7 @@
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
+import asyncio
 import re
 import logging
 
@@ -78,7 +79,11 @@ class QueryRewriter:
         keywords = self._extract_keywords(normalized)
         optimization_notes.append(f"关键词提取：{', '.join(keywords)}")
         if self.llm:
-            rewritten, rewrite_usage = await self._llm_rewrite(normalized, query_type, keywords)
+            # 改写与扩展两次 LLM 调用相互独立，并行执行（串行时慢供应商下单次优化可达 35s+）
+            (rewritten, rewrite_usage), (expanded, expand_usage) = await asyncio.gather(
+                self._llm_rewrite(normalized, query_type, keywords),
+                self._expand_queries(normalized, query_type),
+            )
             logger.info(f"[optimize] llm_rewritten='{rewritten}'")
             if rewritten != normalized:
                 optimization_notes.append("LLM改写：修正语法、补充完整")
@@ -86,13 +91,12 @@ class QueryRewriter:
                 total_usage[k] += rewrite_usage.get(k, 0)
         else:
             rewritten = normalized
-        if self.llm:
-            expanded, expand_usage = await self._expand_queries(rewritten, query_type)
-            optimization_notes.append(f"查询扩展：生成{len(expanded)}个变体")
-            for k in total_usage:
-                total_usage[k] += expand_usage.get(k, 0)
-        else:
             expanded = []
+            expand_usage = {}
+        for k in total_usage:
+            total_usage[k] += expand_usage.get(k, 0)
+        if expanded:
+            optimization_notes.append(f"查询扩展：生成{len(expanded)}个变体")
         logger.info(f"[optimize] final rewritten='{rewritten}', intent={intent}")
         return OptimizedQuery(original=raw_query, rewritten=rewritten, expanded_queries=expanded, query_type=query_type, keywords=keywords, intent_confidence=confidence, optimization_notes=optimization_notes, intent=intent, usage=total_usage)
 
