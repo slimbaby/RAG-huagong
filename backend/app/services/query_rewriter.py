@@ -79,6 +79,14 @@ class QueryRewriter:
         optimization_notes.append(f"意图识别：{query_type.value}，置信度{confidence:.2f}")
         keywords = self._extract_keywords(normalized)
         optimization_notes.append(f"关键词提取：{', '.join(keywords)}")
+        # 通用闲聊/问候：跳过 LLM 改写和扩展（节省 ~26s）
+        if intent == "general":
+            optimization_notes.append("通用查询，跳过LLM改写")
+            return OptimizedQuery(
+                original=raw_query, rewritten=normalized, expanded_queries=[],
+                query_type=query_type, keywords=keywords, intent_confidence=confidence,
+                optimization_notes=optimization_notes, intent=intent, usage=total_usage,
+            )
         if self.llm:
             (rewritten, route_from_llm, rewrite_usage), (expanded, expand_usage) = await asyncio.gather(
                 self._llm_rewrite_and_route(normalized, query_type, keywords),
@@ -89,11 +97,14 @@ class QueryRewriter:
                 if rewritten != normalized:
                     optimization_notes.append("LLM改写：修正语法、补充完整")
                 if route_from_llm:
-                    if route_from_llm == "kb_query" or intent == "general":
+                    if route_from_llm == "kb_query" and intent == "general":
+                        intent = route_from_llm
+                        optimization_notes.append(f"LLM路由：{intent}（覆盖regex general）")
+                    elif route_from_llm != intent:
                         intent = route_from_llm
                         optimization_notes.append(f"LLM路由：{intent}")
                     else:
-                        optimization_notes.append(f"LLM路由建议={route_from_llm}，保留regex意图={intent}")
+                        optimization_notes.append(f"LLM路由={route_from_llm}，与regex一致")
             else:
                 rewritten = normalized
                 expand_usage = rewrite_usage
