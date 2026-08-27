@@ -502,7 +502,7 @@ EVIDENCE_JUDGE_PROMPT = """你是检索充分性评估器。判断参考资料�
 
 只返回 JSON：{{"sufficient": true/false, "missing": "缺口描述", "sub_query": "补充检索词"}}"""
 
-MAX_RETRIEVAL_ITERATIONS = 1
+MAX_RETRIEVAL_ITERATIONS = 0
 
 
 async def evidence_judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
