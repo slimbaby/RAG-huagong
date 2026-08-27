@@ -273,7 +273,7 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     try:
-        use_general = (intent == "general") or (not retrieval_confident)
+        use_general = (intent == "general") or (not retrieval_confident and not tool_registry)
 
         if use_general:
             kb_context = ""

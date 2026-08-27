@@ -172,7 +172,7 @@ def get_rag_graph():
             from ..agents.graph import create_rag_graph
             deps = get_deps()
             _rag_graph = create_rag_graph(deps=deps)
-            logger.info("RAG Graph初始化完成")
+            logger.info(f"RAG Graph初始化完成, tool_registry={bool(deps.get('tool_registry'))}")
         except Exception as e:
             logger.error(f"RAG Graph初始化失败: {e}")
     return _rag_graph
@@ -236,6 +236,7 @@ async def chat_query(request: ChatRequest):
     deps = get_deps()
     tracer = deps.get("tracer")
     trace_id = None
+    logger.info(f"[chat_query] deps: tool_registry={bool(deps.get('tool_registry'))}, fast_llm={bool(deps.get('fast_llm_client'))}")
 
     try:
         if tracer:
