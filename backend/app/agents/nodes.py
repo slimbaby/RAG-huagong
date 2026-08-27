@@ -502,7 +502,7 @@ EVIDENCE_JUDGE_PROMPT = """你是检索充分性评估器。判断参考资料�
 
 只返回 JSON：{{"sufficient": true/false, "missing": "缺口描述", "sub_query": "补充检索词"}}"""
 
-MAX_RETRIEVAL_ITERATIONS = 2
+MAX_RETRIEVAL_ITERATIONS = 1
 
 
 async def evidence_judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -520,6 +520,11 @@ async def evidence_judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"[evidence_judge] 已达最大迭代轮次({iteration})，进入生成")
         return {"need_more_evidence": False}
     if not filtered:
+        return {"need_more_evidence": False}
+    # 检索质量足够好时跳过评估（避免高分结果被误判为不足）
+    top_reranker = filtered[0].get("reranker_score", 0) if filtered else 0
+    if top_reranker >= 0.5:
+        logger.info(f"[evidence_judge] reranker_score={top_reranker:.4f}>=0.5，跳过评估")
         return {"need_more_evidence": False}
 
     question = state.get("optimized_query") or state.get("user_query", "")
