@@ -6,6 +6,7 @@ from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 import asyncio
+import json
 import re
 import logging
 
@@ -79,14 +80,24 @@ class QueryRewriter:
         keywords = self._extract_keywords(normalized)
         optimization_notes.append(f"关键词提取：{', '.join(keywords)}")
         if self.llm:
-            # 改写与扩展两次 LLM 调用相互独立，并行执行（串行时慢供应商下单次优化可达 35s+）
-            (rewritten, rewrite_usage), (expanded, expand_usage) = await asyncio.gather(
-                self._llm_rewrite(normalized, query_type, keywords),
+            (rewritten, route_from_llm, rewrite_usage), (expanded, expand_usage) = await asyncio.gather(
+                self._llm_rewrite_and_route(normalized, query_type, keywords),
                 self._expand_queries(normalized, query_type),
             )
-            logger.info(f"[optimize] llm_rewritten='{rewritten}'")
-            if rewritten != normalized:
-                optimization_notes.append("LLM改写：修正语法、补充完整")
+            logger.info(f"[optimize] llm_rewritten='{rewritten}', route_from_llm='{route_from_llm}'")
+            if rewritten:
+                if rewritten != normalized:
+                    optimization_notes.append("LLM改写：修正语法、补充完整")
+                if route_from_llm:
+                    if route_from_llm == "kb_query" or intent == "general":
+                        intent = route_from_llm
+                        optimization_notes.append(f"LLM路由：{intent}")
+                    else:
+                        optimization_notes.append(f"LLM路由建议={route_from_llm}，保留regex意图={intent}")
+            else:
+                rewritten = normalized
+                expand_usage = rewrite_usage
+                optimization_notes.append("LLM改写失败，使用原始查询")
             for k in total_usage:
                 total_usage[k] += rewrite_usage.get(k, 0)
         else:
@@ -193,6 +204,41 @@ class QueryRewriter:
         except Exception as e:
             logger.warning(f"LLM rewrite failed: {e}")
             return query, {}
+
+    async def _llm_rewrite_and_route(self, query: str, query_type: QueryType, keywords: List[str]) -> Tuple[str, str, dict]:
+        """LLM改写 + 路由分类（合并为单次调用以降低延迟）。返回 (rewritten, route, usage)；失败时 route=''。"""
+        prompt = f"""你是化工领域查询优化专家。优化用户查询用于知识库检索，并同时判断该问题的路由。
+
+原始查询：{query}
+查询类型：{query_type.value}
+关键词：{', '.join(keywords)}
+
+优化要求：
+1. 修正语法错误和错别字
+2. 补充缺失的上下文
+3. 将口语化表达转为专业表达
+4. 保持原意不变
+
+路由判断（route 字段）：
+- "kb_query"：答案可能存在于企业知识库文档中（人员信息、制度规范、设备工艺等）
+- "general"：纯闲聊、常识、时事等与知识库无关的问题
+
+只返回 JSON：{{"rewritten": "...", "route": "kb_query" 或 "general"}}"""
+        try:
+            result = await self.llm.generate(prompt)
+            text = result.get("text", "") if isinstance(result, dict) else str(result)
+            usage = result.get("usage", {}) if isinstance(result, dict) else {}
+            m = re.search(r'\{[\s\S]*\}', text)
+            if m:
+                data = json.loads(m.group())
+                rewritten = (data.get("rewritten") or "").strip()
+                route = (data.get("route") or "").strip()
+                if rewritten:
+                    return rewritten, route if route in ("kb_query", "general") else "", usage
+            return "", "", usage
+        except Exception as e:
+            logger.warning(f"LLM rewrite+route failed: {e}")
+            return "", "", {}
 
     async def _expand_queries(self, query: str, query_type: QueryType) -> List[str]:
         prompt = f"""基于以下查询，生成3个不同角度的查询变体，用于提升知识库检索召回率。

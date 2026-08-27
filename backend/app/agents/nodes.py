@@ -3,11 +3,17 @@ LangGraph节点函数 - RAG流程的各个步骤
 """
 
 from typing import Dict, Any, List, Optional
+import json
 import logging
 import re
 import uuid
 
 logger = logging.getLogger(__name__)
+
+try:
+    from ..tools.agent_tools import TOOLS_SCHEMA
+except ImportError:
+    TOOLS_SCHEMA = []
 
 # 问题词停用表：从查询中剔除后，剩余分词视为实体候选（人名、机构名等）
 _QUESTION_WORDS = {
@@ -154,6 +160,19 @@ async def retrieval_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     "rank": r.rank,
                 })
 
+        # 迭代补检索时，合并前序轮次的结果（reranker 会对合并后集合统一重排）
+        accumulated = state.get("accumulated_results") or []
+        if accumulated:
+            seen_acc = {d.get("chunk_id", "") for d in result_dicts}
+            added = 0
+            for r in accumulated:
+                cid = r.get("chunk_id", "")
+                if cid and cid not in seen_acc:
+                    result_dicts.append(r)
+                    seen_acc.add(cid)
+                    added += 1
+            logger.info(f"[retrieval_node] 合并前序结果: +{added} 条，总计 {len(result_dicts)} 条")
+
         return {"raw_results": result_dicts, "filtered_results": result_dicts}
 
     except Exception as e:
@@ -196,8 +215,45 @@ GENERAL_PROMPT = """你是化工园区知识库助手。用户的问题不涉及
 """
 
 
+async def _chat_with_tools(llm_client, messages, tools_schema, tool_registry, max_rounds=2):
+    """带工具调用循环的对话。返回 {"text", "usage", "tool_trace": [...]}"""
+    tool_trace = []
+    msgs = list(messages)
+    usage_total = {}
+    for _ in range(max_rounds + 1):
+        result = await llm_client.chat_with_tools(msgs, tools=tools_schema)
+        for k in ("prompt_tokens", "completion_tokens"):
+            usage_total[k] = usage_total.get(k, 0) + result.get("usage", {}).get(k, 0)
+        calls = result.get("tool_calls") or []
+        if not calls:
+            return {"text": result.get("text", ""), "usage": usage_total, "tool_trace": tool_trace}
+        assistant_msg = {"role": "assistant", "content": result.get("text") or "", "tool_calls": calls}
+        msgs.append(assistant_msg)
+        for tc in calls:
+            fn_name = tc.get("function", {}).get("name", "")
+            raw_args = tc.get("function", {}).get("arguments", "{}")
+            try:
+                args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+            except Exception:
+                args = {}
+            fn = tool_registry.get(fn_name)
+            if fn is None:
+                output = json.dumps({"error": f"未知工具 {fn_name}"}, ensure_ascii=False)
+            else:
+                try:
+                    output = fn(**args)
+                except Exception as e:
+                    output = json.dumps({"error": str(e)}, ensure_ascii=False)
+            logger.info(f"[tool_loop] {fn_name}({args}) -> {str(output)[:120]}")
+            tool_trace.append({"name": fn_name, "args": args, "output_preview": str(output)[:200]})
+            msgs.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": output})
+    # 轮次用尽，最后一次强制无工具回答
+    result = await llm_client.chat(msgs)
+    return {"text": result["text"], "usage": usage_total, "tool_trace": tool_trace}
+
+
 async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """节点4: 生成回答（支持多轮记忆）"""
+    """节点4: 生成回答（支持多轮记忆 + 工具调用循环）"""
     deps = state.get("_deps", {})
     llm_client = deps.get("llm_client")
     citation_service = deps.get("citation_service")
@@ -208,6 +264,7 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
     retrieval_confident = state.get("retrieval_confident", True)
     session_id = state.get("session_id", "")
     tracer = deps.get("tracer")
+    tool_registry = deps.get("tool_registry")
 
     if not llm_client:
         return {
@@ -216,10 +273,8 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     try:
-        # 判断使用哪种模式：通用问答 vs 知识库检索
         use_general = (intent == "general") or (not retrieval_confident)
 
-        # 构建知识库上下文
         if use_general:
             kb_context = ""
             logger.info(f"[generate_node] 使用通用问答模式, intent={intent}, retrieval_confident={retrieval_confident}")
@@ -230,7 +285,6 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 kb_context = "\n\n".join([r.get("content", "") for r in filtered_results])
             logger.info(f"[generate_node] optimized_query='{optimized_query}', filtered_results={len(filtered_results)}条, context长度={len(kb_context)}")
 
-        # 使用记忆系统构建多轮对话 context
         if memory_manager and session_id:
             messages, relevant_memories = await memory_manager.build_context(
                 session_id=session_id,
@@ -240,9 +294,11 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 retrieval_confident=retrieval_confident,
             )
             logger.info(f"[generate_node] 使用记忆模式, messages={len(messages)}条, 长期记忆={len(relevant_memories)}条")
-            result = await llm_client.chat(messages)
+            if tool_registry:
+                result = await _chat_with_tools(llm_client, messages, TOOLS_SCHEMA, tool_registry)
+            else:
+                result = await llm_client.chat(messages)
         else:
-            # 降级：无记忆系统时使用原有单轮 prompt
             if use_general:
                 prompt = GENERAL_PROMPT.format(question=optimized_query)
             else:
@@ -250,11 +306,14 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     context=kb_context, question=optimized_query
                 )
             logger.info(f"[generate_node] 使用单轮模式（无记忆系统）")
-            result = await llm_client.generate(prompt)
+            if tool_registry:
+                messages = [{"role": "user", "content": prompt}]
+                result = await _chat_with_tools(llm_client, messages, TOOLS_SCHEMA, tool_registry)
+            else:
+                result = await llm_client.generate(prompt)
 
         response_text = result["text"]
 
-        # 记录token用量
         usage = result.get("usage", {})
         if tracer:
             tracer.record_tokens(
@@ -372,6 +431,11 @@ async def check_retrieval_confidence_node(state: Dict[str, Any]) -> Dict[str, An
     """节点: 检查检索置信度，低置信度时标记为兜底"""
     filtered_results = state.get("filtered_results", [])
 
+    # 迭代补检索轮次：由充分性评估决定是否继续，不再降级通用模式
+    if state.get("iteration_count", 0) > 0:
+        logger.info(f"[check_retrieval_confidence] 迭代第{state['iteration_count']}轮，跳过低置信度降级")
+        return {"retrieval_confident": True}
+
     if not filtered_results:
         logger.info("[check_retrieval_confidence] 无检索结果，标记为低置信度")
         return {"retrieval_confident": False}
@@ -420,6 +484,78 @@ async def check_retrieval_confidence_node(state: Dict[str, Any]) -> Dict[str, An
 
     logger.info(f"[check_retrieval_confidence] {score_name}={top_score:.4f}，置信度足够")
     return {"retrieval_confident": True}
+
+
+EVIDENCE_JUDGE_PROMPT = """你是检索充分性评估器。判断参考资料是否足以回答用户问题。
+
+## 问题
+{question}
+
+## 参考资料
+{context}
+
+## 判断标准
+1. 参考资料中存在能直接回答问题的具体信息 → sufficient=true
+2. 参考资料相关但缺少回答问题所需的关键信息 → sufficient=false，并给出 sub_query（针对缺口的精确子查询）
+3. 参考资料完全无关 → sufficient=false，sub_query 为改写后的更精准检索词
+注意：如果问题是通用闲聊或明确无需知识库，sufficient=true。
+
+只返回 JSON：{{"sufficient": true/false, "missing": "缺口描述", "sub_query": "补充检索词"}}"""
+
+MAX_RETRIEVAL_ITERATIONS = 2
+
+
+async def evidence_judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """节点: 充分性评估，证据不足时触发补检索（最多 MAX_RETRIEVAL_ITERATIONS 轮）"""
+    deps = state.get("_deps", {})
+    judge_llm = deps.get("fast_llm_client") or deps.get("llm_client")
+    intent = state.get("intent", "kb_query")
+    filtered = state.get("filtered_results", [])
+    iteration = state.get("iteration_count", 0)
+
+    # 无需评估的情形
+    if intent == "general" or not state.get("retrieval_confident", True) or not judge_llm:
+        return {"need_more_evidence": False}
+    if iteration >= MAX_RETRIEVAL_ITERATIONS:
+        logger.info(f"[evidence_judge] 已达最大迭代轮次({iteration})，进入生成")
+        return {"need_more_evidence": False}
+    if not filtered:
+        return {"need_more_evidence": False}
+
+    question = state.get("optimized_query") or state.get("user_query", "")
+    context = "\n\n".join(f"[{i+1}] {r.get('content', '')[:600]}" for i, r in enumerate(filtered[:5]))
+    prompt = EVIDENCE_JUDGE_PROMPT.format(question=question, context=context)
+
+    try:
+        result = await judge_llm.generate(prompt, temperature=0.0)
+        text = result.get("text", "") if isinstance(result, dict) else str(result)
+        m = re.search(r'\{[\s\S]*\}', text)
+        data = json.loads(m.group()) if m else {}
+    except Exception as e:
+        logger.warning(f"[evidence_judge] 评估失败，默认充分: {e}")
+        return {"need_more_evidence": False}
+
+    if data.get("sufficient", True):
+        logger.info("[evidence_judge] 证据充分，进入生成")
+        return {"need_more_evidence": False}
+
+    sub_q = (data.get("sub_query") or "").strip()
+    if not sub_q:
+        return {"need_more_evidence": False}
+
+    logger.info(f"[evidence_judge] 证据不足({data.get('missing', '')})，第{iteration + 1}轮补检索: {sub_q}")
+    return {
+        "need_more_evidence": True,
+        "iteration_count": iteration + 1,
+        "optimized_query": sub_q,
+        "query_vector": None,
+        "accumulated_results": (state.get("accumulated_results") or []) + filtered,
+    }
+
+
+def route_after_evidence_judge(state: Dict[str, Any]) -> str:
+    """条件边: 充分性评估后的路由"""
+    return "retrieve_more" if state.get("need_more_evidence") else "generate"
 
 
 def should_use_tools(state: Dict[str, Any]) -> str:

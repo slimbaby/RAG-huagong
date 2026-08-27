@@ -44,6 +44,11 @@ class RAGState(TypedDict):
     context: Optional[str]
     answer: Optional[str]
     citations: List[Dict]
+    # Iterative retrieval (evidence judge)
+    iteration_count: int
+    accumulated_results: List[Dict]
+    need_more_evidence: bool
+    judge_note: Optional[str]
     # Error handling
     error: Optional[str]
     # Metadata

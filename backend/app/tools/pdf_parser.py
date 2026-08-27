@@ -10,6 +10,18 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# PaddleOCR 单例：模型加载极重（数百MB、秒级），严禁每页/每图重新实例化
+_OCR_INSTANCE = None
+
+
+def _get_paddle_ocr():
+    global _OCR_INSTANCE
+    if _OCR_INSTANCE is None:
+        from paddleocr import PaddleOCR
+        logger.info("初始化 PaddleOCR 单例（仅首次）...")
+        _OCR_INSTANCE = PaddleOCR(use_angle_cls=True, lang="ch")
+    return _OCR_INSTANCE
+
 
 class PDFParserTool(BaseParserTool):
     """PDF解析器 - 支持文本和表格提取，保留页码和行号"""
@@ -18,6 +30,16 @@ class PDFParserTool(BaseParserTool):
         self.llm = llm_client
         from .table_processor import TableProcessor
         self.processor = TableProcessor(**kwargs)
+        self._open_doc = None
+
+    def close_doc(self):
+        """异常路径兜底：关闭仍打开的 fitz 文档句柄（成功路径已正常 close，重复调用安全）。"""
+        doc, self._open_doc = self._open_doc, None
+        if doc is not None:
+            try:
+                doc.close()
+            except Exception:
+                pass
 
     @property
     def supported_extensions(self) -> List[str]:
@@ -53,6 +75,7 @@ class PDFParserTool(BaseParserTool):
         page_results = checkpoint.get("page_results", {})
 
         doc = fitz.open(file_path)
+        self._open_doc = doc
         total_pages = len(doc)
         elements = []
 
@@ -172,7 +195,7 @@ class PDFParserTool(BaseParserTool):
                 except Exception:
                     pass
 
-        doc.close()
+        self.close_doc()
         return elements
 
     @staticmethod
@@ -206,15 +229,16 @@ class PDFParserTool(BaseParserTool):
             temp_path = f.name
         try:
             try:
-                from paddleocr import PaddleOCR
-                ocr = PaddleOCR(use_angle_cls=True, lang="ch")
+                ocr = _get_paddle_ocr()
                 result = ocr.ocr(temp_path, cls=True)
                 if result and result[0]:
                     text = "\n".join([line[1][0] for line in result[0]])
                     if text.strip():
                         return text
-            except (ImportError, Exception):
+            except ImportError:
                 pass
+            except Exception as e:
+                logger.warning(f"PaddleOCR图片OCR失败: {e}")
             try:
                 import pytesseract
                 from PIL import Image
@@ -249,8 +273,7 @@ class PDFParserTool(BaseParserTool):
             temp_path = f.name
         try:
             try:
-                from paddleocr import PaddleOCR
-                ocr = PaddleOCR(use_angle_cls=True, lang="ch")
+                ocr = _get_paddle_ocr()
                 result = ocr.ocr(temp_path, cls=True)
                 if result and result[0]:
                     lines = []
@@ -261,8 +284,10 @@ class PDFParserTool(BaseParserTool):
                             lines.append(text)
                     if lines:
                         return "\n".join(lines)
-            except (ImportError, Exception) as e:
-                logger.debug(f"PaddleOCR page OCR failed: {e}")
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.warning(f"PaddleOCR页面OCR失败: {e}")
             try:
                 import pytesseract
                 from PIL import Image
@@ -293,6 +318,7 @@ class PDFParserTool(BaseParserTool):
     def parse_with_structure(self, file_path: str) -> List[DocumentElement]:
         import fitz
         doc = fitz.open(file_path)
+        self._open_doc = doc
         elements = []
         for page_num in range(len(doc)):
             page = doc[page_num]
@@ -356,7 +382,7 @@ class PDFParserTool(BaseParserTool):
                         ))
             tables = self._extract_tables_from_page(page, page_num + 1)
             elements.extend(tables)
-        doc.close()
+        self.close_doc()
         return elements
 
     def _is_heading_from_text(self, text: str) -> bool:

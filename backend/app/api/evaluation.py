@@ -255,8 +255,9 @@ async def _run_eval_task(task_id: str, request: EvalRunRequest):
 
         gate_config = None
         if not request.gate_enabled:
+            # 关闭门禁 = 全部阈值放行（GateConfig 没有 min_ragas_faithfulness 字段，传了会 TypeError）
             gate_config = GateConfig(min_overall_score=0, min_hallucination_score=0,
-                                     min_citation_score=0, min_ragas_faithfulness=0,
+                                     min_citation_score=0,
                                      max_single_fail=999)
 
         runner = EvalRunner(rag_api_url="http://localhost:8000", llm_client=llm_client, gate_config=gate_config)

@@ -336,15 +336,26 @@ async def _parse_file(file_path: str, file_ext: str, original_filename: str = No
         # 更新进度：解析中
         if file_hash:
             _update_progress(file_hash, "parsing")
-        elements = await parser.parse_with_checkpoint(
-            file_path, original_filename=original_filename, checkpoint_path=checkpoint_path,
-            on_page_done=lambda done, total: _update_progress(file_hash, "parsing", done, total) if file_hash else None,
-        )
-        chunks = await parser._elements_to_chunks(elements, file_path, original_filename)
+        try:
+            async def _parse_and_chunk():
+                elements = await parser.parse_with_checkpoint(
+                    file_path, original_filename=original_filename, checkpoint_path=checkpoint_path,
+                    on_page_done=lambda done, total: _update_progress(file_hash, "parsing", done, total) if file_hash else None,
+                )
+                return await parser._elements_to_chunks(elements, file_path, original_filename)
+
+            # 解析+OCR 是纯同步重计算，放到工作线程执行，避免阻塞事件循环导致整个 API 无响应
+            chunks = await asyncio.to_thread(asyncio.run, _parse_and_chunk())
+        finally:
+            getattr(parser, "close_doc", lambda: None)()
     elif file_ext in (".pdf", ".docx"):
-        chunks = await parser.parse(file_path, original_filename=original_filename)
+        try:
+            chunks = await asyncio.to_thread(
+                asyncio.run, parser.parse(file_path, original_filename=original_filename)
+            )
+        finally:
+            getattr(parser, "close_doc", lambda: None)()
     else:
-        import asyncio
         chunks = await asyncio.to_thread(parser.parse, file_path)
     if not chunks:
         raise ValueError("文件解析结果为空")

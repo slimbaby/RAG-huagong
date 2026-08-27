@@ -20,7 +20,8 @@ services:
     restart: unless-stopped
     mem_limit: 4g
 
-  # Redis缓存（密码通过环境变量注入，默认保持原值，轮换时改 .env 或 shell 环境即可）
+  # Redis缓存（密码通过环境变量注入。注意：compose 插值只读取本目录 docker/.env 或 shell 环境变量，
+  # 根目录 .env 对插值无效；轮换密码时需同步修改 backend 的 REDIS_PASSWORD 覆盖项）
   redis:
     image: redis:7-alpine
     container_name: langgraph_rag_redis

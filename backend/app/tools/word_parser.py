@@ -45,15 +45,17 @@ class WordParserTool(BaseParserTool):
             temp_path = f.name
         try:
             try:
-                from paddleocr import PaddleOCR
-                ocr = PaddleOCR(use_angle_cls=True, lang="ch")
+                from .pdf_parser import _get_paddle_ocr
+                ocr = _get_paddle_ocr()
                 result = ocr.ocr(temp_path, cls=True)
                 if result and result[0]:
                     text = "\n".join([line[1][0] for line in result[0]])
                     if text.strip():
                         return text
-            except (ImportError, Exception):
+            except ImportError:
                 pass
+            except Exception as e:
+                logger.warning(f"PaddleOCR图片OCR失败: {e}")
             try:
                 import pytesseract
                 from PIL import Image

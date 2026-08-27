@@ -18,6 +18,8 @@ from .nodes import (
     should_use_tools,
     route_after_optimize,
     check_retrieval_confidence_node,
+    evidence_judge_node,
+    route_after_evidence_judge,
 )
 from ..tracing.tracer import SpanType
 
@@ -29,6 +31,7 @@ _NODE_SPAN_MAP = {
     "retrieval": SpanType.RETRIEVAL,
     "reranker": SpanType.RETRIEVAL,
     "check_confidence": SpanType.RETRIEVAL,
+    "evidence_judge": SpanType.LLM_CALL,
     "generate": SpanType.LLM_CALL,
     "tool_call": SpanType.TOOL_CALL,
 }
@@ -74,6 +77,12 @@ def extract_span_outputs(node_name: str, updates: Dict, state: Dict = None) -> D
     elif node_name == "check_confidence":
         return {
             "retrieval_confident": updates.get("retrieval_confident", True),
+        }
+    elif node_name == "evidence_judge":
+        return {
+            "need_more_evidence": updates.get("need_more_evidence", False),
+            "iteration_count": updates.get("iteration_count", 0),
+            "judge_note": updates.get("judge_note", ""),
         }
     elif node_name == "generate":
         context = updates.get("context", "")
@@ -137,8 +146,8 @@ def create_rag_graph(deps: Dict[str, Any] = None):
     """
     创建RAG查询图
 
-    流程: query_optimize -> [route_intent] -> kb_query: vectorize -> retrieval -> reranker -> check_confidence -> generate
-                                           -> general: generate
+    流程: query_optimize -> [route_intent] -> kb_query: vectorize -> retrieval -> reranker -> check_confidence -> evidence_judge -> [retrieve_more | generate]
+                                            -> general: generate
     """
     workflow = StateGraph(dict)
 
@@ -147,6 +156,7 @@ def create_rag_graph(deps: Dict[str, Any] = None):
     workflow.add_node("retrieval", _make_wrapper(deps, retrieval_node, "retrieval"))
     workflow.add_node("reranker", _make_wrapper(deps, reranker_node, "reranker"))
     workflow.add_node("check_confidence", _make_wrapper(deps, check_retrieval_confidence_node, "check_confidence"))
+    workflow.add_node("evidence_judge", _make_wrapper(deps, evidence_judge_node, "evidence_judge"))
     workflow.add_node("generate", _make_wrapper(deps, generate_node, "generate"))
 
     workflow.set_entry_point("query_optimize")
@@ -160,7 +170,11 @@ def create_rag_graph(deps: Dict[str, Any] = None):
     workflow.add_edge("vectorize", "retrieval")
     workflow.add_edge("retrieval", "reranker")
     workflow.add_edge("reranker", "check_confidence")
-    workflow.add_edge("check_confidence", "generate")
+    workflow.add_edge("check_confidence", "evidence_judge")
+    workflow.add_conditional_edges("evidence_judge", route_after_evidence_judge, {
+        "retrieve_more": "vectorize",
+        "generate": "generate",
+    })
     workflow.add_edge("generate", END)
 
     return workflow.compile()
@@ -181,6 +195,7 @@ def create_agent_graph(deps: Dict[str, Any] = None):
     workflow.add_node("retrieval", _make_wrapper(deps, retrieval_node, "retrieval"))
     workflow.add_node("reranker", _make_wrapper(deps, reranker_node, "reranker"))
     workflow.add_node("check_confidence", _make_wrapper(deps, check_retrieval_confidence_node, "check_confidence"))
+    workflow.add_node("evidence_judge", _make_wrapper(deps, evidence_judge_node, "evidence_judge"))
     workflow.add_node("generate", _make_wrapper(deps, generate_node, "generate"))
     workflow.add_node("tool_call", _make_wrapper(deps, tool_call_node, "tool_call"))
 
@@ -195,11 +210,11 @@ def create_agent_graph(deps: Dict[str, Any] = None):
     workflow.add_edge("vectorize", "retrieval")
     workflow.add_edge("retrieval", "reranker")
     workflow.add_edge("reranker", "check_confidence")
-    workflow.add_conditional_edges("check_confidence", should_use_tools, {
-        "tool_call": "tool_call",
+    workflow.add_edge("check_confidence", "evidence_judge")
+    workflow.add_conditional_edges("evidence_judge", route_after_evidence_judge, {
+        "retrieve_more": "vectorize",
         "generate": "generate",
     })
-    workflow.add_edge("tool_call", "generate")
     workflow.add_edge("generate", END)
 
     return workflow.compile()

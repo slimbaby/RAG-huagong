@@ -52,7 +52,12 @@ class BM25Index:
     def add_document(self, doc_id: str, content: str, metadata: Dict = None):
         tokens = self._tokenize(content)
         doc_length = len(tokens)
-        self.doc_stats[doc_id] = {"length": doc_length, "metadata": metadata or {}}
+        # 保留正文片段：向量库不可用时，BM25命中仍能提供可用内容（供reranker/实体兜底/引用）
+        self.doc_stats[doc_id] = {
+            "length": doc_length,
+            "metadata": metadata or {},
+            "content": (content or "")[:4000],
+        }
         self._total_length += doc_length
         self.doc_count += 1
         self.avg_doc_length = self._total_length / self.doc_count if self.doc_count > 0 else 0

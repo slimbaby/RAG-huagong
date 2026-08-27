@@ -151,25 +151,32 @@ class EvalRunner:
             case.question, answer, case.ground_truth, contexts
         )
 
-        # 7. 综合评分
+        # 7. 综合评分（失败的指标排除出加权总分，不再用中性分冒充真实成绩）
         ragas_faith = ragas_scores.get("faithfulness", 0) * 10
         ragas_cp = ragas_scores.get("context_precision", 0) * 10
         ragas_cr = ragas_scores.get("context_recall", 0) * 10
         ragas_available = any(v > 0 for v in [ragas_faith, ragas_cp, ragas_cr])
 
-        scores = {
-            "rule": rule_result["score"],
-            "hallucination": halluc_result["score"],
-            "citation": citation_result["score"],
-            "consistency": consistency_result["score"],
-            "judge": judge_result.overall_score,
-        }
-        weights = {
-            "rule": 1.0, "hallucination": 1.5, "citation": 1.0,
-            "consistency": 0.8, "judge": 1.2,
-        }
+        scores = {"rule": rule_result["score"]}
+        weights = {"rule": 1.0}
+        metric_failures = []
 
-        # RAGAS 可用时加入权重，不可用时跳过（避免拉低分数）
+        def _add_metric(name: str, result: Dict, weight: float):
+            if result.get("failed") or result.get("score") is None:
+                metric_failures.append(f"{name}: {result.get('fail_reason', '未知原因')}")
+                return
+            scores[name] = result["score"]
+            weights[name] = weight
+
+        _add_metric("hallucination", halluc_result, 1.5)
+        _add_metric("consistency", consistency_result, 0.8)
+        # 引用检查是纯规则计算，不会失败
+        scores["citation"] = citation_result["score"]
+        weights["citation"] = 1.0
+        if judge_result is not None:
+            scores["judge"] = judge_result.overall_score
+            weights["judge"] = 1.2
+
         if ragas_available:
             scores["ragas_faithfulness"] = ragas_faith
             scores["ragas_context_precision"] = ragas_cp
@@ -178,14 +185,18 @@ class EvalRunner:
             weights["ragas_context_precision"] = 0.5
             weights["ragas_context_recall"] = 0.5
 
-        total_weight = sum(weights.values())
-        overall = sum(scores[k] * weights[k] for k in scores) / total_weight
+        if not scores:
+            overall = 0.0
+            fail_reasons_all = ["所有评分指标均失败，无法评估"]
+        else:
+            total_weight = sum(weights.values())
+            overall = sum(scores[k] * weights[k] for k in scores) / total_weight
 
         # 判断是否通过
         fail_reasons = []
         if overall < 6.0:
             fail_reasons.append(f"总分 {overall:.1f} < 6.0")
-        if halluc_result["score"] < 6.0:
+        if not halluc_result.get("failed") and halluc_result["score"] < 6.0:
             fail_reasons.append(f"幻觉分 {halluc_result['score']:.1f} < 6.0")
         if rule_result["score"] < 5.0:
             fail_reasons.append(f"规则检查未通过: {rule_result.get('reasons', [])}")
@@ -213,6 +224,7 @@ class EvalRunner:
                 "citation": citation_result,
                 "consistency": consistency_result,
                 "ragas": ragas_scores,
+                "metric_failures": metric_failures,
             },
         )
 
@@ -259,7 +271,7 @@ class EvalRunner:
         url = f"{self.rag_api_url}/api/chat/query"
         payload = {"question": question, "session_id": session_id, "stream": False}
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=240.0) as client:
             try:
                 resp = await client.post(url, json=payload)
                 resp.raise_for_status()

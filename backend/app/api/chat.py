@@ -135,12 +135,34 @@ def get_deps():
                 "reranker_service": reranker_service,
                 "session_store": session_store,
                 "memory_manager": memory_manager,
+                "tool_registry": None,
+                "fast_llm_client": None,
             }
+
+            try:
+                from ..tools.agent_tools import TOOL_REGISTRY
+                _deps["tool_registry"] = TOOL_REGISTRY
+                logger.info("Agent工具集初始化完成")
+            except Exception as e:
+                logger.warning(f"Agent工具集加载失败: {e}")
+
+            try:
+                standard_key = getattr(settings, "STANDARD_MODEL_API_KEY", "")
+                standard_url = getattr(settings, "STANDARD_MODEL_API_BASE_URL", "")
+                standard_name = getattr(settings, "STANDARD_MODEL_NAME", "")
+                if standard_key and standard_url and standard_name:
+                    _deps["fast_llm_client"] = LLMService(
+                        api_key=standard_key, base_url=standard_url, model_name=standard_name
+                    )
+                    logger.info("fast_llm_client初始化完成（用于证据评估/路由）")
+            except Exception as e:
+                logger.warning(f"fast_llm_client初始化失败: {e}")
+
             logger.info("依赖初始化完成")
         except Exception as e:
             logger.error(f"依赖初始化失败: {e}")
-            _deps = {}
-    return _deps
+            _deps = None
+    return _deps or {}
 
 
 def get_rag_graph():

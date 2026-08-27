@@ -45,17 +45,40 @@ class HybridMilvusStore:
                 # 检查是否需要 schema 迁移（旧 collection 缺少 doc_id/status 字段）
                 schema_fields = {f.name for f in self.collection.schema.fields}
                 if "doc_id" not in schema_fields or "status" not in schema_fields:
-                    logger.info(f"检测到旧 schema，正在重建 collection: {self.collection_name}")
+                    logger.error(
+                        f"检测到旧 schema，正在删除并重建 collection: {self.collection_name}。"
+                        f"注意：此操作将丢弃该集合中的全部向量数据！如需保留请先导出/重传文档。"
+                    )
                     utility.drop_collection(self.collection_name)
                     await self._create_collection()
                 else:
                     self.collection.load()
             else:
+                logger.warning(
+                    f"collection '{self.collection_name}' 不存在，将创建空集合。"
+                    f"若此前已有知识库数据，说明 Milvus 元数据丢失（容器重建等），需要重新上传文档！"
+                )
                 await self._create_collection()
             logger.info(f"Milvus连接成功: {self.host}:{self.port}, collection: {self.collection_name}")
+            await self._check_kb_consistency()
         except Exception as e:
             logger.error(f"Milvus初始化失败: {e}")
             self._connected = False
+
+    async def _check_kb_consistency(self):
+        """一致性自检：向量库为空但 BM25 索引仍有数据时大声报警，
+        避免系统静默降级成'无正文的BM25模式'导致检索质量劣化无人察觉。"""
+        try:
+            entity_count = self.collection.num_entities if self.collection else 0
+            bm25_docs = getattr(self.bm25, "doc_count", 0)
+            if entity_count == 0 and bm25_docs > 0:
+                logger.error(
+                    f"[知识库不一致] 向量库 '{self.collection_name}' 为空，但 BM25 索引仍有 "
+                    f"{bm25_docs} 条数据。向量数据很可能已因 Milvus 重建/元数据丢失而损坏，"
+                    f"当前仅剩 BM25 兜底检索，召回质量会显著下降。请尽快重新上传文档以重建向量库！"
+                )
+        except Exception as e:
+            logger.warning(f"知识库一致性检查失败（不影响服务）: {e}")
 
     async def _create_collection(self):
         from pymilvus import CollectionSchema, FieldSchema, Collection, DataType
@@ -202,11 +225,13 @@ class HybridMilvusStore:
             results = self.bm25.search(query, top_k)
             search_results = []
             for doc_id, score in results:
-                doc_stats = self.bm25.doc_stats.get(doc_id, {})
-                metadata = doc_stats.get("metadata", {})
+                stats = self.bm25.doc_stats.get(doc_id, {})
+                metadata = stats.get("metadata", {})
                 search_results.append({
                     "chunk_id": doc_id,
-                    "content": "",
+                    # 回填正文：向量侧失效时 BM25 命中仍可参与 rerank/实体兜底/引用，
+                    # 否则空 content 会被 reranker 打出近零分导致整条链路误判
+                    "content": stats.get("content", ""),
                     "metadata": metadata,
                     "bm25_score": score,
                 })

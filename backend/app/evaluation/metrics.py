@@ -21,6 +21,8 @@ class HallucinationFree:
                     expected_not_contains: List[str] = None) -> Dict:
         scores = {}
         reasons = []
+        failed = False
+        fail_reason = ""
 
         # 规则检查：expected_not_contains
         if expected_not_contains:
@@ -76,12 +78,22 @@ class HallucinationFree:
                 json_match = re.search(r'\{[\s\S]*\}', result["text"])
                 if json_match:
                     data = json.loads(json_match.group())
-                    scores["llm_hallucination"] = data.get("hallucination_score", 5)
+                    if "hallucination_score" in data:
+                        scores["llm_hallucination"] = data["hallucination_score"]
+                    else:
+                        failed = True
+                        fail_reason = "LLM返回JSON缺少hallucination_score字段"
                     if data.get("hallucinated_claims"):
                         reasons.append(f"编造的声明: {data['hallucinated_claims']}")
+                else:
+                    failed = True
+                    fail_reason = "LLM返回内容不含JSON"
             except Exception as e:
                 logger.warning(f"Hallucination LLM check failed: {e}")
+                # 中性分5仅作占位显示；runner 会将失败指标排除出加权总分
                 scores["llm_hallucination"] = 5.0
+                failed = True
+                fail_reason = f"LLM幻觉检查调用失败: {e}"
 
         # 综合分数
         if scores:
@@ -93,6 +105,8 @@ class HallucinationFree:
             "score": round(avg_score, 2),
             "details": scores,
             "reasons": reasons,
+            "failed": failed,
+            "fail_reason": fail_reason,
         }
 
 
@@ -155,7 +169,7 @@ class MultiTurnConsistency:
     async def score(self, question: str, answer: str,
                     previous_qa_pairs: List[Dict] = None) -> Dict:
         if not previous_qa_pairs or not self.llm:
-            return {"score": 10.0, "details": {}, "reasons": []}
+            return {"score": 10.0, "details": {}, "reasons": [], "failed": False, "fail_reason": ""}
 
         history_text = ""
         for i, qa in enumerate(previous_qa_pairs, 1):
@@ -187,16 +201,34 @@ class MultiTurnConsistency:
             json_match = re.search(r'\{[\s\S]*\}', result["text"])
             if json_match:
                 data = json.loads(json_match.group())
-                score = data.get("consistency_score", 10)
-                reasons = []
-                if data.get("contradictions"):
-                    reasons.append(f"矛盾: {data['contradictions']}")
+                if "consistency_score" in data:
+                    score = data["consistency_score"]
+                    reasons = []
+                    if data.get("contradictions"):
+                        reasons.append(f"矛盾: {data['contradictions']}")
+                    return {
+                        "score": score,
+                        "details": {"consistency": score},
+                        "reasons": reasons,
+                        "failed": False,
+                        "fail_reason": "",
+                    }
+                # JSON 缺少分数字段：显式标记失败，不再静默给满分
                 return {
-                    "score": score,
-                    "details": {"consistency": score},
-                    "reasons": reasons,
+                    "score": 10.0,
+                    "details": {},
+                    "reasons": [],
+                    "failed": True,
+                    "fail_reason": "LLM返回JSON缺少consistency_score字段",
                 }
         except Exception as e:
             logger.warning(f"MultiTurnConsistency check failed: {e}")
+            return {
+                "score": 10.0,
+                "details": {},
+                "reasons": [],
+                "failed": True,
+                "fail_reason": f"多轮一致性LLM检查失败: {e}",
+            }
 
-        return {"score": 10.0, "details": {}, "reasons": []}
+        return {"score": 10.0, "details": {}, "reasons": [], "failed": True, "fail_reason": "LLM返回内容不含JSON"}
