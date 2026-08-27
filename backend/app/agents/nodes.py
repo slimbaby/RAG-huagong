@@ -486,75 +486,30 @@ async def check_retrieval_confidence_node(state: Dict[str, Any]) -> Dict[str, An
     return {"retrieval_confident": True}
 
 
-EVIDENCE_JUDGE_PROMPT = """你是检索充分性评估器。判断参考资料是否足以回答用户问题。
-
-## 问题
-{question}
-
-## 参考资料
-{context}
-
-## 判断标准
-1. 参考资料中存在能直接回答问题的具体信息 → sufficient=true
-2. 参考资料相关但缺少回答问题所需的关键信息 → sufficient=false，并给出 sub_query（针对缺口的精确子查询）
-3. 参考资料完全无关 → sufficient=false，sub_query 为改写后的更精准检索词
-注意：如果问题是通用闲聊或明确无需知识库，sufficient=true。
-
-只返回 JSON：{{"sufficient": true/false, "missing": "缺口描述", "sub_query": "补充检索词"}}"""
-
-MAX_RETRIEVAL_ITERATIONS = 0
-
-
 async def evidence_judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """节点: 充分性评估，证据不足时触发补检索（最多 MAX_RETRIEVAL_ITERATIONS 轮）"""
-    deps = state.get("_deps", {})
-    judge_llm = deps.get("fast_llm_client") or deps.get("llm_client")
+    """节点: 检索结果为空时触发一轮补检索，有结果时直接放行"""
     intent = state.get("intent", "kb_query")
     filtered = state.get("filtered_results", [])
     iteration = state.get("iteration_count", 0)
 
-    # 无需评估的情形
-    if intent == "general" or not state.get("retrieval_confident", True) or not judge_llm:
+    # 通用模式 / 低置信度（已降级通用）/ 已有检索结果 → 不需要补检索
+    if intent == "general" or not state.get("retrieval_confident", True):
         return {"need_more_evidence": False}
-    if iteration >= MAX_RETRIEVAL_ITERATIONS:
-        logger.info(f"[evidence_judge] 已达最大迭代轮次({iteration})，进入生成")
+    if filtered:
         return {"need_more_evidence": False}
-    if not filtered:
-        return {"need_more_evidence": False}
-    # 检索质量足够好时跳过评估（避免高分结果被误判为不足）
-    top_reranker = filtered[0].get("reranker_score", 0) if filtered else 0
-    if top_reranker >= 0.5:
-        logger.info(f"[evidence_judge] reranker_score={top_reranker:.4f}>=0.5，跳过评估")
+    # 已经补检索过一轮仍为空 → 放行，让 generate 兜底
+    if iteration > 0:
+        logger.info(f"[evidence_judge] 补检索第{iteration}轮仍为空，进入生成")
         return {"need_more_evidence": False}
 
-    question = state.get("optimized_query") or state.get("user_query", "")
-    context = "\n\n".join(f"[{i+1}] {r.get('content', '')[:600]}" for i, r in enumerate(filtered[:5]))
-    prompt = EVIDENCE_JUDGE_PROMPT.format(question=question, context=context)
-
-    try:
-        result = await judge_llm.generate(prompt, temperature=0.0)
-        text = result.get("text", "") if isinstance(result, dict) else str(result)
-        m = re.search(r'\{[\s\S]*\}', text)
-        data = json.loads(m.group()) if m else {}
-    except Exception as e:
-        logger.warning(f"[evidence_judge] 评估失败，默认充分: {e}")
-        return {"need_more_evidence": False}
-
-    if data.get("sufficient", True):
-        logger.info("[evidence_judge] 证据充分，进入生成")
-        return {"need_more_evidence": False}
-
-    sub_q = (data.get("sub_query") or "").strip()
-    if not sub_q:
-        return {"need_more_evidence": False}
-
-    logger.info(f"[evidence_judge] 证据不足({data.get('missing', '')})，第{iteration + 1}轮补检索: {sub_q}")
+    # 检索结果为空且是第一轮 → 用改写后的查询再试一次
+    optimized_query = state.get("optimized_query") or state.get("user_query", "")
+    logger.info(f"[evidence_judge] 检索结果为空，第1轮补检索: {optimized_query}")
     return {
         "need_more_evidence": True,
-        "iteration_count": iteration + 1,
-        "optimized_query": sub_q,
+        "iteration_count": 1,
+        "optimized_query": optimized_query,
         "query_vector": None,
-        "accumulated_results": (state.get("accumulated_results") or []) + filtered,
     }
 
 
