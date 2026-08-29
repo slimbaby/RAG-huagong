@@ -230,6 +230,7 @@ const DatasetTab: React.FC = () => {
 const RunTab: React.FC = () => {
   const { runEval, pollTaskStatus, fetchReports } = useEvalStore();
   const [layer, setLayer] = useState<string>('all');
+  const [sampleRatio, setSampleRatio] = useState<number>(0.2);
   const [gateEnabled, setGateEnabled] = useState(true);
   const [includeStale, setIncludeStale] = useState(false);
   const [running, setRunning] = useState(false);
@@ -243,6 +244,7 @@ const RunTab: React.FC = () => {
         layer: layer === 'all' ? undefined : layer,
         gate_enabled: gateEnabled,
         include_stale: includeStale,
+        sample_ratio: layer === 'core' ? undefined : sampleRatio,
       });
       message.success(`评测已启动: ${taskId}`);
 
@@ -286,6 +288,17 @@ const RunTab: React.FC = () => {
             { value: 'core', label: '核心用例 (core)' },
             { value: 'document', label: '文档用例 (document)' },
             { value: 'regression', label: '回归用例 (regression)' },
+          ]} />
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ color: '#5E6E88', fontSize: 13, marginBottom: 6 }}>
+            抽样比例 <span style={{ fontSize: 12 }}>(core 层始终全量，其他层按比例随机抽样)</span>
+          </div>
+          <Select value={sampleRatio} onChange={setSampleRatio} style={{ width: '100%' }} options={[
+            { value: 0.1, label: '10% (快速)' },
+            { value: 0.2, label: '20% (推荐)' },
+            { value: 0.5, label: '50%' },
+            { value: 1, label: '100% 全量 (最慢)' },
           ]} />
         </div>
         <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>

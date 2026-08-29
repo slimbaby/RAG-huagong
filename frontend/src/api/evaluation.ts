@@ -16,6 +16,7 @@ export const runEvaluation = (data?: {
   layer?: string;
   gate_enabled?: boolean;
   include_stale?: boolean;
+  sample_ratio?: number;
 }) => client.post('/eval/run', data || {}).then((r) => r.data);
 
 export const getEvalTaskStatus = (taskId: string) =>

@@ -457,7 +457,8 @@ class MemoryManager:
             if not utility.has_collection(self.collection_name):
                 return
             col = Collection(self.collection_name)
-            col.delete(f'memory_id == "{vector_id}"')
+            from app.vectorstore.hybrid_store import _milvus_escape
+            col.delete(f'memory_id == "{_milvus_escape(vector_id)}"')
             col.flush()
             if self._memory_collection is not None:
                 self._memory_collection = None

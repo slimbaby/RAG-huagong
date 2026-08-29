@@ -155,16 +155,22 @@ async def health_check():
     return {"status": "healthy", "service": settings.APP_NAME, "version": "2.0.0"}
 
 
-from .api import chat, documents, health, resilience, errors, tracing, checkpoints, evaluation
+from .api import auth, chat, documents, health, resilience, errors, tracing, checkpoints, evaluation
+from .core.security import verify_token
+from fastapi import Depends
+
+# 除认证和健康检查外，所有 API 路由都要求 Bearer JWT（AUTH_ENABLED=False 时自动放行）
+_protected = [Depends(verify_token)]
 
 app.include_router(health.router, prefix="/api", tags=["健康检查"])
-app.include_router(chat.router, prefix="/api/chat", tags=["聊天"])
-app.include_router(documents.router, prefix="/api/documents", tags=["文档管理"])
-app.include_router(resilience.router, prefix="/api/resilience", tags=["韧性保护"])
-app.include_router(errors.router, prefix="/api/errors", tags=["错误记录"])
-app.include_router(tracing.router, prefix="/api/tracing", tags=["链路追踪"])
-app.include_router(checkpoints.router, prefix="/api/checkpoints", tags=["检查点"])
-app.include_router(evaluation.router, prefix="/api/eval", tags=["评测"])
+app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
+app.include_router(chat.router, prefix="/api/chat", tags=["聊天"], dependencies=_protected)
+app.include_router(documents.router, prefix="/api/documents", tags=["文档管理"], dependencies=_protected)
+app.include_router(resilience.router, prefix="/api/resilience", tags=["韧性保护"], dependencies=_protected)
+app.include_router(errors.router, prefix="/api/errors", tags=["错误记录"], dependencies=_protected)
+app.include_router(tracing.router, prefix="/api/tracing", tags=["链路追踪"], dependencies=_protected)
+app.include_router(checkpoints.router, prefix="/api/checkpoints", tags=["检查点"], dependencies=_protected)
+app.include_router(evaluation.router, prefix="/api/eval", tags=["评测"], dependencies=_protected)
 
 
 @app.on_event("startup")

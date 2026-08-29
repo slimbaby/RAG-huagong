@@ -21,7 +21,7 @@ interface EvalState {
   fetchReport: (evalId: string) => Promise<void>;
   fetchDataset: () => Promise<void>;
   fetchDatasetStats: () => Promise<void>;
-  runEval: (params?: { layer?: string; gate_enabled?: boolean; include_stale?: boolean }) => Promise<string>;
+  runEval: (params?: { layer?: string; gate_enabled?: boolean; include_stale?: boolean; sample_ratio?: number }) => Promise<string>;
   pollTaskStatus: (taskId: string) => Promise<any>;
   clearCurrentReport: () => void;
 }

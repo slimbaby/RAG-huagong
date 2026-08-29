@@ -90,6 +90,15 @@ async def _init_tables(pool: asyncpg.Pool):
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        # 用户表（JWT认证）
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(64) UNIQUE NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
         # 索引
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_eval_cases_layer ON eval_cases(layer)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_eval_cases_doc ON eval_cases(source_doc_id)")

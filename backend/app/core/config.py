@@ -34,6 +34,21 @@ class Settings(BaseSettings):
     MEMORY_RECALL_TOP_K: int = 5              # 每次召回的记忆条数
     MEMORY_TOKEN_BUDGET: int = 1000           # 记忆注入的 Token 预算
 
+    # 认证配置
+    AUTH_ENABLED: bool = True
+    JWT_SECRET_KEY: str = ""  # 为空时启动自动生成随机密钥（重启后旧 token 全部失效）
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 1440  # token 有效期（分钟），默认 24 小时
+
+    # RAGAS评测配置
+    RAGAS_ENABLED: bool = True
+    RAGAS_TIMEOUT_SECONDS: int = 600  # 单次子进程评分（chunk=10样本）的超时
+
+    # 评测执行配置
+    EVAL_CONCURRENCY: int = 3               # 用例并发数（受 LLM 供应商限额和 CPU 影响）
+    EVAL_SAMPLE_RATIO: float = 0.2          # 非 core 层用例默认抽样比例（1.0 = 全量）
+    EVAL_SAMPLE_SEED: int = 20260828        # 抽样随机种子（固定值保证可复现对比）
+
     # CORS配置
     CORS_ORIGINS: List[str] = [
         "http://localhost:5173",
@@ -109,7 +124,7 @@ class Settings(BaseSettings):
     EMBEDDING_DIMENSION: int = 768
 
     # Reranker配置
-    RERANKER_MODEL_NAME: str = "BAAI/bge-reranker-v2-m3"
+    RERANKER_MODEL_NAME: str = "BAAI/bge-reranker-base"
     RERANKER_ENABLED: bool = True
     RERANKER_TOP_K: int = 5
 

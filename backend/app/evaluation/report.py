@@ -6,10 +6,25 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from datetime import datetime
 import json
+import math
 import os
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_json(obj):
+    """递归替换非有限浮点数 (NaN/Inf) 为 0.0。
+
+    Python json.dumps 默认输出 NaN 字面量，PostgreSQL jsonb 会拒绝，
+    导致整个评测报告保存失败（异常路径下指标可能产生 NaN）。"""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else 0.0
+    if isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_json(v) for v in obj]
+    return obj
 
 
 @dataclass
@@ -51,7 +66,7 @@ class EvalReport:
     config: Dict = field(default_factory=dict)
 
     def to_dict(self) -> Dict:
-        return {
+        return _sanitize_json({
             "eval_id": self.eval_id,
             "timestamp": self.timestamp,
             "total_cases": self.total_cases,
@@ -85,7 +100,7 @@ class EvalReport:
                 }
                 for r in self.case_results
             ],
-        }
+        })
 
     def save(self, path: str):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

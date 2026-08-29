@@ -20,6 +20,7 @@ class EvalRunRequest(BaseModel):
     gate_enabled: bool = True
     layer: Optional[str] = None           # "core" / "document" / "regression" / None(全部)
     include_stale: bool = False           # 是否包含失效用例
+    sample_ratio: Optional[float] = None  # 非 core 层抽样比例 (0.05~1.0)；None=用配置默认，1.0=全量
 
 
 class EvalRunResponse(BaseModel):
@@ -267,6 +268,7 @@ async def _run_eval_task(task_id: str, request: EvalRunRequest):
             baseline_path=request.baseline_path,
             layer=request.layer,
             include_stale=request.include_stale,
+            sample_ratio=request.sample_ratio,
         )
 
         # 报告保存到数据库

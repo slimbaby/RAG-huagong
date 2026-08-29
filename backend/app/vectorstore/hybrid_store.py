@@ -10,6 +10,12 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 
+def _milvus_escape(value: str) -> str:
+    """转义 Milvus 布尔表达式中的字符串字面量，防止文件名/doc_id 中的
+    引号和反斜杠破坏表达式结构（表达式注入）"""
+    return str(value).replace("\\", "\\\\").replace('"', '\\"')
+
+
 @dataclass
 class HybridSearchResult:
     chunk_id: str
@@ -346,7 +352,7 @@ class HybridMilvusStore:
         if not self._connected or not self.collection:
             return
         try:
-            expr = f'source_file == "{source_file}"'
+            expr = f'source_file == "{_milvus_escape(source_file)}"'
 
             def _do():
                 self.collection.delete(expr)
@@ -364,7 +370,7 @@ class HybridMilvusStore:
             if not self._connected or not self.collection:
                 return
         try:
-            expr = f'doc_id == "{doc_id}"'
+            expr = f'doc_id == "{_milvus_escape(doc_id)}"'
 
             def _do():
                 self.collection.delete(expr)
@@ -385,7 +391,7 @@ class HybridMilvusStore:
             if not self._connected or not self.collection:
                 return []
 
-        expr = f'source_file == "{source_file}"'
+        expr = f'source_file == "{_milvus_escape(source_file)}"'
 
         def _do():
             return self.collection.query(

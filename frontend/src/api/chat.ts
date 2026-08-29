@@ -1,5 +1,6 @@
 import apiClient from './client';
 import type { ChatRequest, ChatResponse, StepProgress } from '../types';
+import { getStoredToken } from '../stores/authStore';
 
 export async function sendQuestion(request: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
   const response = await apiClient.post<ChatResponse>('/chat/query', request, { signal });
@@ -14,9 +15,13 @@ export async function sendQuestionStream(
   onError: (error: string) => void,
 ): Promise<void> {
   const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
+  const token = getStoredToken();
   const res = await fetch(`${baseURL}/chat/query/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify(request),
     signal,
   });

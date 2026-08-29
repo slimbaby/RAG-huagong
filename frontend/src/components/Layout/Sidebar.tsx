@@ -1,7 +1,8 @@
 import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { MessageSquare, FileText, ScrollText, FlaskConical, Plus, Trash2, MessageCircle, BarChart3 } from 'lucide-react';
+import { MessageSquare, FileText, ScrollText, FlaskConical, Plus, Trash2, MessageCircle, BarChart3, LogOut } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
+import { useAuthStore } from '../../stores/authStore';
 
 interface NavItem { key: string; path: string; label: string; icon: React.ReactNode; }
 
@@ -16,6 +17,8 @@ const Sidebar: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { sessions, sessionId, createSession, switchSession, deleteSession, loadSessions } = useChatStore();
+  const authUsername = useAuthStore((s) => s.username);
+  const logout = useAuthStore((s) => s.logout);
   const [hoveredSession, setHoveredSession] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -44,6 +47,11 @@ const Sidebar: React.FC = () => {
   const handleDeleteSession = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     deleteSession(id);
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login', { replace: true });
   };
 
   const formatTime = (ts: number) => {
@@ -120,7 +128,10 @@ const Sidebar: React.FC = () => {
       <div style={styles.divider} />
       <div style={styles.userArea}>
         <div style={styles.avatar} />
-        <span style={styles.userName}>管理员</span>
+        <span style={styles.userName}>{authUsername || '未登录'}</span>
+        <div style={styles.logoutBtn} onClick={handleLogout} title="退出登录">
+          <LogOut size={14} />
+        </div>
       </div>
     </aside>
   );
@@ -148,7 +159,8 @@ const styles: Record<string, React.CSSProperties> = {
   deleteBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, borderRadius: 4, cursor: 'pointer', color: '#EF4444', background: 'rgba(239, 68, 68, 0.1)', flexShrink: 0 },
   userArea: { display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12, padding: '12px 16px' },
   avatar: { width: 32, height: 32, borderRadius: 16, background: 'linear-gradient(-135deg, #4F8CFF 14.645%, #8B5CF6 85.355%)' },
-  userName: { fontSize: 12, color: '#94A3B8', fontFamily: "'Inter', sans-serif" },
+  userName: { fontSize: 12, color: '#94A3B8', fontFamily: "'Inter', sans-serif", flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  logoutBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, borderRadius: 6, cursor: 'pointer', color: '#5E6E88', background: 'rgba(239, 68, 68, 0.08)', flexShrink: 0 },
 };
 
 export default Sidebar;

@@ -5,11 +5,13 @@
 
 from typing import Dict, List, Optional
 from datetime import datetime
+from dataclasses import dataclass, field
 import asyncio
 import httpx
 import logging
 import os
 import json
+import random
 
 from .dataset import EvalCase, load_dataset
 from .ragas_evaluator import RAGASEvaluator, EvalSample
@@ -19,6 +21,22 @@ from .report import CaseResult, EvalReport, generate_report, compare_reports
 from .gate import EvalGate, GateConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _CaseIntermediate:
+    """阶段1产物：问答+独立指标已完成，待 RAGAS 批量评分后合并出分"""
+    case: EvalCase
+    answer: str
+    citations: List[Dict]
+    contexts: List[str]
+    rule_result: Dict
+    halluc_result: Dict
+    citation_result: Dict
+    consistency_result: Dict
+    judge_result: Optional[object]
+    previous_qa: List[Dict] = field(default_factory=list)
+    error: Optional[str] = None
 
 
 class EvalRunner:
@@ -39,6 +57,9 @@ class EvalRunner:
         self.consistency_metric = MultiTurnConsistency(llm_client=llm_client)
         self.gate = EvalGate(gate_config)
 
+        from ..core.config import settings
+        self.concurrency = max(1, getattr(settings, "EVAL_CONCURRENCY", 3))
+
     async def run(
         self,
         dataset_path: str = None,
@@ -47,8 +68,11 @@ class EvalRunner:
         layer: str = None,
         include_stale: bool = False,
         use_db: bool = False,
+        sample_ratio: Optional[float] = None,
     ) -> EvalReport:
-        """执行完整评测流程"""
+        """执行完整评测流程（三阶段：并发问答+独立指标 → 批量RAGAS → 合并出分）"""
+        from ..core.config import settings
+
         if use_db:
             from .dataset import load_cases_from_db
             cases = await load_cases_from_db()
@@ -75,27 +99,95 @@ class EvalRunner:
             logger.warning("过滤后无可用用例")
             return generate_report([])
 
-        logger.info(f"开始评测: {len(cases)} 条用例")
-        case_results = []
+        # 分层抽样：core 层始终全量（回归基线），其他层按比例抽样
+        if sample_ratio is None:
+            sample_ratio = getattr(settings, "EVAL_SAMPLE_RATIO", 0.2)
+        sample_ratio = min(max(float(sample_ratio), 0.05), 1.0)
+        sampled_out = 0
+        if sample_ratio < 1.0:
+            core_cases = [c for c in cases if c.layer == "core"]
+            other_cases = [c for c in cases if c.layer != "core"]
+            if other_cases:
+                rng = random.Random(getattr(settings, "EVAL_SAMPLE_SEED", 20260828))
+                n_keep = max(1, round(len(other_cases) * sample_ratio))
+                cases = core_cases + rng.sample(other_cases, n_keep)
+                sampled_out = len(other_cases) - n_keep
+                logger.info(
+                    f"非core层抽样: {len(other_cases)} -> {n_keep} 条 "
+                    f"(ratio={sample_ratio}, seed={settings.EVAL_SAMPLE_SEED}, 抽掉 {sampled_out} 条)"
+                )
 
-        for i, case in enumerate(cases, 1):
-            logger.info(f"[{i}/{len(cases)}] 评测: {case.id} - {case.question[:50]}...")
+        run_params = dict(params or {})
+        run_params["sample_ratio"] = sample_ratio
+        run_params["sampled_out"] = sampled_out
+        run_params["concurrency"] = self.concurrency
+
+        logger.info(f"开始评测: {len(cases)} 条用例 (并发={self.concurrency})")
+
+        # ── 阶段1: 并发执行问答 + 独立指标（规则/幻觉/一致性/Judge） ──
+        sem = asyncio.Semaphore(self.concurrency)
+
+        async def _run_one(idx_case):
+            idx, case = idx_case
+            async with sem:
+                logger.info(f"[{idx}/{len(cases)}] 评测: {case.id} - {case.question[:50]}...")
+                try:
+                    return await self._run_case(case)
+                except Exception as e:
+                    logger.error(f"  → ERROR: {case.id}: {e}")
+                    return _CaseIntermediate(
+                        case=case, answer=f"评测出错: {str(e)}", citations=[], contexts=[],
+                        rule_result={}, halluc_result={"failed": True, "score": None},
+                        citation_result={}, consistency_result={"failed": True, "score": None},
+                        judge_result=None, error=str(e),
+                    )
+
+        intermediates = list(await asyncio.gather(
+            *[_run_one((i, c)) for i, c in enumerate(cases, 1)]
+        ))
+
+        # ── 阶段2: 批量 RAGAS（chunk 合并子进程调用，chunk 间并发） ──
+        pending = [x for x in intermediates if not x.error]
+        ragas_per_case: List[Dict[str, float]] = []
+        if pending:
+            samples = [
+                EvalSample(
+                    question=x.case.question, answer=x.answer,
+                    contexts=x.contexts, ground_truth=x.case.ground_truth,
+                )
+                for x in pending
+            ]
+            ragas_batch = await self.ragas.evaluate_batch(samples)
+            ragas_per_case = ragas_batch.per_sample_scores
+        ragas_map = {id(x): s for x, s in zip(pending, ragas_per_case)}
+
+        # ── 阶段3: 合并 RAGAS 分数，计算总分与通过判定 ──
+        case_results = []
+        for x in intermediates:
+            if x.error:
+                case_results.append(CaseResult(
+                    case_id=x.case.id, question=x.case.question,
+                    category=x.case.category, difficulty=x.case.difficulty,
+                    answer=x.answer, overall_score=0,
+                    passed=False, fail_reasons=[x.error],
+                ))
+                continue
             try:
-                result = await self._eval_single(case)
+                result = self._finalize_case(x, ragas_map.get(id(x), {}))
                 case_results.append(result)
                 status = "PASS" if result.passed else "FAIL"
-                logger.info(f"  → {status} (score={result.overall_score:.1f})")
+                logger.info(f"  → {x.case.id}: {status} (score={result.overall_score:.1f})")
             except Exception as e:
-                logger.error(f"  → ERROR: {e}")
+                logger.error(f"  → 合并评分失败 {x.case.id}: {e}")
                 case_results.append(CaseResult(
-                    case_id=case.id, question=case.question,
-                    category=case.category, difficulty=case.difficulty,
-                    answer=f"评测出错: {str(e)}", overall_score=0,
-                    passed=False, fail_reasons=[str(e)],
+                    case_id=x.case.id, question=x.case.question,
+                    category=x.case.category, difficulty=x.case.difficulty,
+                    answer=x.answer, overall_score=0,
+                    passed=False, fail_reasons=[f"合并评分失败: {e}"],
                 ))
 
         # 生成报告
-        report = generate_report(case_results, config=params)
+        report = generate_report(case_results, config=run_params)
 
         # 门禁检查
         baseline = None
@@ -106,11 +198,11 @@ class EvalRunner:
 
         return report
 
-    async def _eval_single(self, case: EvalCase) -> CaseResult:
-        """评测单条用例"""
+    async def _run_case(self, case: EvalCase) -> _CaseIntermediate:
+        """阶段1：执行问答（含多轮 setup）+ 规则检查 + 并发跑独立指标"""
         session_id = f"eval_{case.id}_{datetime.now().strftime('%H%M%S')}"
 
-        # 1. 多轮场景：执行 setup_questions
+        # 1. 多轮场景：执行 setup_questions（必须串行，后续轮次依赖前面的对话上下文）
         previous_qa = []
         for sq in (case.setup_questions or []):
             resp = await self._call_rag_api(sq, session_id)
@@ -127,31 +219,36 @@ class EvalRunner:
             if content:
                 contexts.append(content)
 
-        # 3. 规则检查
+        # 3. 规则检查（纯规则，瞬时完成）
         rule_result = self._check_rules(case, answer, citations)
+        citation_result = self.citation_metric.score(answer, citations, case.expected_source)
 
-        # 4. RAGAS 评分
-        ragas_scores = await self.ragas.evaluate_single(
-            case.question, answer, contexts, case.ground_truth
-        )
-
-        # 5. 自定义指标
-        halluc_result = await self.hallucination_metric.score(
-            case.question, answer, contexts, case.expected_not_contains
-        )
-        citation_result = self.citation_metric.score(
-            answer, citations, case.expected_source
-        )
-        consistency_result = await self.consistency_metric.score(
-            case.question, answer, previous_qa
+        # 4. 三个独立 LLM 指标并发执行（RAGAS 留到阶段2批量跑）
+        halluc_result, consistency_result, judge_result = await asyncio.gather(
+            self.hallucination_metric.score(
+                case.question, answer, contexts, case.expected_not_contains
+            ),
+            self.consistency_metric.score(case.question, answer, previous_qa),
+            self.judge.judge(case.question, answer, case.ground_truth, contexts),
         )
 
-        # 6. LLM Judge
-        judge_result = await self.judge.judge(
-            case.question, answer, case.ground_truth, contexts
+        return _CaseIntermediate(
+            case=case, answer=answer, citations=citations, contexts=contexts,
+            rule_result=rule_result, halluc_result=halluc_result,
+            citation_result=citation_result, consistency_result=consistency_result,
+            judge_result=judge_result, previous_qa=previous_qa,
         )
 
-        # 7. 综合评分（失败的指标排除出加权总分，不再用中性分冒充真实成绩）
+    def _finalize_case(self, x: _CaseIntermediate, ragas_scores: Dict[str, float]) -> CaseResult:
+        """阶段3：合并 RAGAS 批量分数，计算加权总分与通过判定"""
+        case, answer, citations = x.case, x.answer, x.citations
+        rule_result = x.rule_result
+        halluc_result = x.halluc_result
+        citation_result = x.citation_result
+        consistency_result = x.consistency_result
+        judge_result = x.judge_result
+
+        # 综合评分（失败的指标排除出加权总分，不再用中性分冒充真实成绩）
         ragas_faith = ragas_scores.get("faithfulness", 0) * 10
         ragas_cp = ragas_scores.get("context_precision", 0) * 10
         ragas_cr = ragas_scores.get("context_recall", 0) * 10
@@ -267,13 +364,16 @@ class EvalRunner:
         return {"score": max(0, score), "reasons": reasons}
 
     async def _call_rag_api(self, question: str, session_id: str) -> Dict:
-        """调用 RAG API"""
+        """调用 RAG API（带内部服务 token，chat 接口已启用 JWT 认证）"""
+        from ..core.security import create_access_token
+
         url = f"{self.rag_api_url}/api/chat/query"
         payload = {"question": question, "session_id": session_id, "stream": False}
+        headers = {"Authorization": f"Bearer {create_access_token('eval_runner')}"}
 
         async with httpx.AsyncClient(timeout=240.0) as client:
             try:
-                resp = await client.post(url, json=payload)
+                resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
