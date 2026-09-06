@@ -1,10 +1,11 @@
 import React, { useEffect } from 'react';
-import { Input, Table, Tag, Button, Tooltip, Drawer, Timeline, Spin, Empty, Descriptions, Collapse } from 'antd';
+import { Input, Table, Tag, Button, Tooltip, Drawer, Timeline, Spin, Empty, Descriptions, Collapse, Tabs } from 'antd';
 import { SearchOutlined, ReloadOutlined, EyeOutlined, CheckCircleOutlined, CloseCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { TraceInfo } from '../types';
 import { useTraceStore } from '../stores/traceStore';
-import { getTrace } from '../api/trace';
+import { getTrace, getFlamegraph } from '../api/trace';
+import FlameGraph from '../components/Trace/FlameGraph';
 
 const renderSpanOutputs = (outputs: any) => {
   if (!outputs) return null;
@@ -72,14 +73,20 @@ const RecordPage: React.FC = () => {
   const [detailOpen, setDetailOpen] = React.useState(false);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [traceDetail, setTraceDetail] = React.useState<any>(null);
+  const [flameData, setFlameData] = React.useState<any>(null);
 
   const handleViewDetail = async (record: TraceInfo) => {
     setDetailOpen(true);
     setDetailLoading(true);
     setTraceDetail(null);
+    setFlameData(null);
     try {
-      const detail = await getTrace(record.trace_id);
+      const [detail, flame] = await Promise.all([
+        getTrace(record.trace_id),
+        getFlamegraph(record.trace_id).catch(() => null),
+      ]);
       setTraceDetail(detail);
+      setFlameData(flame);
     } catch {
       setTraceDetail({ error: '获取详情失败' });
     } finally {
@@ -155,35 +162,54 @@ const RecordPage: React.FC = () => {
               <Descriptions.Item label="引用数">{traceDetail.sources_count ?? 0}</Descriptions.Item>
               <Descriptions.Item label="回答" contentStyle={{ whiteSpace: 'pre-wrap' }}>{traceDetail.answer || '-'}</Descriptions.Item>
             </Descriptions>
-            <div style={{ color: '#E4EBF5', fontSize: 14, fontWeight: 600, marginBottom: 12 }}>执行步骤</div>
-            {traceDetail.spans?.length > 0 ? (
-              <Timeline items={traceDetail.spans.map((span: any) => ({
-                dot: span.status === 'ok' ? <CheckCircleOutlined style={{ color: '#34D399', fontSize: 14 }} /> : span.status === 'error' ? <CloseCircleOutlined style={{ color: '#EF4444', fontSize: 14 }} /> : <ClockCircleOutlined style={{ color: '#FBBF24', fontSize: 14 }} />,
-                children: (
-                  <div style={{ background: '#0D1525', borderRadius: 8, padding: '8px 12px', border: '1px solid #1A2748' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <span style={{ color: '#E4EBF5', fontWeight: 500 }}>{span.operation_name}</span>
-                      <span style={{ color: '#5E6E88', fontFamily: 'monospace', fontSize: 12 }}>{span.duration_ms ? `${Math.round(span.duration_ms)}ms` : '-'}</span>
-                    </div>
-                    <div style={{ color: '#5E6E88', fontSize: 12 }}>{span.span_type}</div>
-                    {span.inputs && Object.keys(span.inputs).length > 0 && (
-                      <div style={{ marginTop: 6, fontSize: 12, color: '#94A3B8' }}>
-                        <span style={{ color: '#5E6E88' }}>输入: </span>
-                        {Object.entries(span.inputs).map(([k, v]) => `${k}=${typeof v === 'string' ? v.substring(0, 100) : JSON.stringify(v)}`).join(', ')}
-                      </div>
-                    )}
-                    {span.outputs && Object.keys(span.outputs).length > 0 && (
-                      <div style={{ marginTop: 6 }}>
-                        <Collapse size="small" items={[{ key: '1', label: <span style={{ color: '#5E6E88', fontSize: 12 }}>输出详情</span>, children: renderSpanOutputs(span.outputs) }]} style={{ background: 'transparent', border: '1px solid #1A2748' }} />
-                      </div>
-                    )}
-                    {span.error_message && <div style={{ marginTop: 6, fontSize: 12, color: '#EF4444' }}>错误: {span.error_message}</div>}
-                  </div>
-                ),
-              }))} />
-            ) : (
-              <Empty description="暂无步骤数据" />
-            )}
+            <Tabs
+              defaultActiveKey="flame"
+              items={[
+                {
+                  key: 'flame',
+                  label: '火焰图',
+                  children: flameData?.spans?.length ? (
+                    <FlameGraph spans={flameData.spans} totalDurationMs={traceDetail.duration_ms} />
+                  ) : (
+                    <Empty description="暂无链路数据" />
+                  ),
+                },
+                {
+                  key: 'steps',
+                  label: '执行步骤',
+                  children: traceDetail.spans?.length > 0 ? (
+                    <Timeline items={[...traceDetail.spans]
+                      .sort((a: any, b: any) => (a.start_time || 0) - (b.start_time || 0))
+                      .map((span: any) => ({
+                        dot: span.status === 'ok' ? <CheckCircleOutlined style={{ color: '#34D399', fontSize: 14 }} /> : span.status === 'error' ? <CloseCircleOutlined style={{ color: '#EF4444', fontSize: 14 }} /> : <ClockCircleOutlined style={{ color: '#FBBF24', fontSize: 14 }} />,
+                        children: (
+                          <div style={{ background: '#0D1525', borderRadius: 8, padding: '8px 12px', border: '1px solid #1A2748', marginLeft: (span.depth || 0) * 20 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                              <span style={{ color: '#E4EBF5', fontWeight: 500 }}>{span.depth ? '└ ' : ''}{span.operation_name}</span>
+                              <span style={{ color: '#5E6E88', fontFamily: 'monospace', fontSize: 12 }}>{span.duration_ms ? `${Math.round(span.duration_ms)}ms` : '-'}</span>
+                            </div>
+                            <div style={{ color: '#5E6E88', fontSize: 12 }}>{span.span_type}{span.parent_span_id ? ` · 父 ${span.parent_span_id}` : ' · 根'}</div>
+                            {span.inputs && Object.keys(span.inputs).length > 0 && (
+                              <div style={{ marginTop: 6, fontSize: 12, color: '#94A3B8' }}>
+                                <span style={{ color: '#5E6E88' }}>输入: </span>
+                                {Object.entries(span.inputs).map(([k, v]) => `${k}=${typeof v === 'string' ? v.substring(0, 100) : JSON.stringify(v)}`).join(', ')}
+                              </div>
+                            )}
+                            {span.outputs && Object.keys(span.outputs).length > 0 && (
+                              <div style={{ marginTop: 6 }}>
+                                <Collapse size="small" items={[{ key: '1', label: <span style={{ color: '#5E6E88', fontSize: 12 }}>输出详情</span>, children: renderSpanOutputs(span.outputs) }]} style={{ background: 'transparent', border: '1px solid #1A2748' }} />
+                              </div>
+                            )}
+                            {span.error_message && <div style={{ marginTop: 6, fontSize: 12, color: '#EF4444' }}>错误: {span.error_message}</div>}
+                          </div>
+                        ),
+                      }))} />
+                  ) : (
+                    <Empty description="暂无步骤数据" />
+                  ),
+                },
+              ]}
+            />
           </div>
         ) : null}
       </Drawer>

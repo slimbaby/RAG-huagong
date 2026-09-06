@@ -81,10 +81,39 @@
 
 **实测效果**：core 层 10 条用例 45.3 分钟 → 17.7 分钟（2.6x）。剩余瓶颈是 CPU reranker（占单条用例 40%+ 耗时，并发时 CPU 饱和），上 GPU 或换轻量 reranker 模型可继续提速。
 
+### 9. Trace 链路修复 (2026-09-06)
+
+**并发串数据** (`tracing/tracer.py`):
+- `threading.local` 存 trace_id → 改 `contextvars.ContextVar`，asyncio 下按 Task 隔离，并发请求不再互相覆盖 trace_id / span 栈
+- start_trace/end_trace 记录 ContextVar token 并精确 reset，上下文无残留
+
+**span 父子嵌套**（原 `parent_span_id` 恒为 None）:
+- 新增不可变 span 栈，`parent_span_id` 与 `depth` 真正生效，链路从扁平列表变树
+- `api/chat.py` 加根 span（`chat_query` / `chat_query_stream`）包住 graph 调用
+- `agents/nodes.py` 节点内部补子 span: query_rewrite / embed_query / hybrid_search / expanded_search / rerank_inference
+- 前端 RecordPage 按 depth 缩进 + 按 start_time 排序展示层级
+
+**火焰图组件** (`frontend/src/components/Trace/FlameGraph.tsx`):
+- 接入了此前空置的 `/tracing/traces/{id}/flamegraph` 接口，RecordPage 抽屉用 Tabs 切「火焰图 / 执行步骤」，默认火焰图
+- 按 depth 分行、按 start_time 计算 left/width 画条，span_type 配色 + 图例，顶部 0/25/50/75/100% 时间刻度
+- 计算**自身耗时**（总耗时 - 直接子 span 耗时和），用于区分"自己慢"还是"下游慢"——reranker 这类纯推理瓶颈自身占比 100%
+- 老数据兼容：无 depth 且 parent 全 null 时从父子关系推断，推断不出退化为第 0 层，不报错
+
+**历史脏数据**（2026-08 落盘的 199 条，勿当作正确样本）:
+- 33/185 条（18%）存在**平级 span 时间重叠**——LangGraph 节点串行执行不可能重叠，这正是修复前 `threading.local` 并发串扰留下的痕迹（别的请求 span 被记进本 trace）。新数据不会再出现，可据此验证修复效果。
+- 3 条含超 1 小时的 span（最长 9.87 小时），疑为悬挂 span 或时钟异常。
+
+**落盘异步化**:
+- `_persist_trace` 提交到单线程池，不再同步阻塞 event loop；executor 关闭时降级为同步写，不丢数据
+- 新增 `backend/tests/test_tracing.py`（5 用例：嵌套结构 / 并发隔离 / 异常标记 / 落盘 / 关闭降级）
+
 ## 关键文件
 
 | 文件 | 用途 |
 |------|------|
+| `backend/app/tracing/tracer.py` | 自研链路追踪（contextvar + span 嵌套树 + 异步落盘） |
+| `backend/tests/test_tracing.py` | Trace 行为测试（嵌套/并发隔离/异常/落盘） |
+| `frontend/src/components/Trace/FlameGraph.tsx` | 火焰图组件（含自身耗时计算） |
 | `backend/app/agents/graph.py` | LangGraph RAG 工作流定义 |
 | `backend/app/agents/nodes.py` | 各节点实现 (查询优化/检索/重排/生成) |
 | `backend/app/tools/table_processor.py` | 表格语义行分组 |

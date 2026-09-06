@@ -3,12 +3,23 @@ LangGraph节点函数 - RAG流程的各个步骤
 """
 
 from typing import Dict, Any, List, Optional
+import contextlib
 import json
 import logging
 import re
 import uuid
 
+from ..tracing.tracer import SpanType
+
 logger = logging.getLogger(__name__)
+
+
+def _tracer_span(tracer, span_type: SpanType, name: str, inputs: Dict = None):
+    """无 tracer 时返回空上下文，避免每个埋点都写一遍 if"""
+    if not tracer:
+        return contextlib.nullcontext()
+    return tracer.start_span(span_type, name, inputs=inputs or {})
+
 
 try:
     from ..tools.agent_tools import TOOLS_SCHEMA
@@ -55,7 +66,9 @@ async def query_optimize_node(state: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     try:
-        optimized = await query_rewriter.optimize(user_query)
+        # 拆出真实 LLM 调用耗时，避免 query_optimize 整体慢时分不清是改写还是网络
+        with _tracer_span(tracer, SpanType.LLM_CALL, "query_rewrite", {"user_query": user_query}):
+            optimized = await query_rewriter.optimize(user_query)
         logger.info(f"[query_optimize_node] optimized.rewritten='{optimized.rewritten}', intent={optimized.intent}")
 
         # 记录token用量
@@ -89,11 +102,14 @@ async def vectorize_node(state: Dict[str, Any]) -> Dict[str, Any]:
     embedding_service = state.get("_deps", {}).get("embedding_service")
     optimized_query = state.get("optimized_query") or state.get("user_query", "")
 
+    tracer = state.get("_deps", {}).get("tracer")
+
     if not embedding_service:
         return {"query_vector": None}
 
     try:
-        vector = await embedding_service.embed_query(optimized_query)
+        with _tracer_span(tracer, SpanType.VECTOR_SEARCH, "embed_query", {"text": optimized_query[:200]}):
+            vector = await embedding_service.embed_query(optimized_query)
         return {"query_vector": vector}
     except Exception as e:
         logger.error(f"Vectorization failed: {e}")
@@ -104,6 +120,7 @@ async def retrieval_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """节点3: 混合检索 - 向量检索 + BM25检索"""
     hybrid_store = state.get("_deps", {}).get("hybrid_store")
     embedding_service = state.get("_deps", {}).get("embedding_service")
+    tracer = state.get("_deps", {}).get("tracer")
     # 直接从state获取，确保不会丢失用户原始问题
     user_query = state.get("user_query", "")
     optimized_query = state.get("optimized_query") or user_query
@@ -119,20 +136,24 @@ async def retrieval_node(state: Dict[str, Any]) -> Dict[str, Any]:
         return {"raw_results": [], "filtered_results": []}
 
     try:
-        results = await hybrid_store.hybrid_search(
-            query=optimized_query,
-            query_vector=query_vector,
-            top_k=20
-        )
+        with _tracer_span(tracer, SpanType.RETRIEVAL, "hybrid_search", {"query": optimized_query, "top_k": 20}) as sp:
+            results = await hybrid_store.hybrid_search(
+                query=optimized_query,
+                query_vector=query_vector,
+                top_k=20
+            )
+            if sp is not None:
+                sp.set_attribute("result_count", len(results))
         logger.info(f"[retrieval_node] hybrid_search返回 {len(results)} 条结果")
 
         # If not enough results, try expanded queries
         if len(results) < 3 and expanded_queries and embedding_service:
             for eq in expanded_queries[:2]:
-                eq_vector = await embedding_service.embed_query(eq)
-                eq_results = await hybrid_store.hybrid_search(
-                    query=eq, query_vector=eq_vector, top_k=5
-                )
+                with _tracer_span(tracer, SpanType.RETRIEVAL, "expanded_search", {"query": eq}):
+                    eq_vector = await embedding_service.embed_query(eq)
+                    eq_results = await hybrid_store.hybrid_search(
+                        query=eq, query_vector=eq_vector, top_k=5
+                    )
                 results.extend(eq_results)
 
         # Deduplicate
@@ -394,6 +415,7 @@ def route_after_optimize(state: Dict[str, Any]) -> str:
 async def reranker_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """节点: Reranker精排 - 交叉编码器对粗检索结果重排序"""
     reranker_service = state.get("_deps", {}).get("reranker_service")
+    tracer = state.get("_deps", {}).get("tracer")
     filtered_results = state.get("filtered_results", [])
     optimized_query = state.get("optimized_query") or state.get("user_query", "")
 
@@ -407,7 +429,11 @@ async def reranker_node(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         # 提取每条结果的文本内容
         documents = [r.get("content", "") for r in filtered_results]
-        scores = await reranker_service.rerank(optimized_query, documents)
+        # 精排是已知最大瓶颈，单独拆出来观察
+        with _tracer_span(tracer, SpanType.RETRIEVAL, "rerank_inference", {"doc_count": len(documents)}) as sp:
+            scores = await reranker_service.rerank(optimized_query, documents)
+            if sp is not None:
+                sp.set_attribute("doc_count", len(documents))
 
         # 将 reranker_score 写入结果
         for i, r in enumerate(filtered_results):

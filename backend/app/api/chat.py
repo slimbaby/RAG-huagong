@@ -7,10 +7,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 from datetime import datetime
+import contextlib
 import logging
 import os
 import json
 import uuid as uuid_lib
+
+from ..tracing.tracer import SpanType
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -269,7 +272,13 @@ async def chat_query(request: ChatRequest):
         }
 
         logger.info(f"[chat_query] initial_state user_query='{initial_state.get('user_query', '')}', state keys: {list(initial_state.keys())}")
-        result = await graph.ainvoke(initial_state)
+        # 根 span：让后续所有节点 span 挂到它下面，形成真正的父子链路
+        root_cm = (
+            tracer.start_span(SpanType.REQUEST, "chat_query", inputs={"question": request.question, "session_id": session_id})
+            if tracer else contextlib.nullcontext()
+        )
+        with root_cm:
+            result = await graph.ainvoke(initial_state)
         logger.info(f"[chat_query] result keys: {list(result.keys()) if isinstance(result, dict) else 'not dict'}")
 
         answer_text = result.get("answer", "无法生成回答")
@@ -407,18 +416,26 @@ async def chat_query_stream(request: ChatRequest):
 
             from ..agents.graph import extract_span_outputs
 
-            async for chunk in graph.astream(initial_state):
-                for node_name, updates in chunk.items():
-                    accumulated_state.update(updates)
+            # 根 span：流式场景下 duration 含 SSE 推送耗时，已标注
+            root_cm = (
+                tracer.start_span(SpanType.REQUEST, "chat_query_stream", inputs={"question": request.question, "session_id": session_id})
+                if tracer else contextlib.nullcontext()
+            )
+            with root_cm as root_span:
+                if root_span is not None:
+                    root_span.set_attribute("includes_sse_flush", True)
+                async for chunk in graph.astream(initial_state):
+                    for node_name, updates in chunk.items():
+                        accumulated_state.update(updates)
 
-                    step_data = extract_span_outputs(node_name, updates, accumulated_state)
-                    event = {
-                        "type": "step",
-                        "node": node_name,
-                        "status": "completed",
-                        "data": step_data,
-                    }
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                        step_data = extract_span_outputs(node_name, updates, accumulated_state)
+                        event = {
+                            "type": "step",
+                            "node": node_name,
+                            "status": "completed",
+                            "data": step_data,
+                        }
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
             answer_text = accumulated_state.get("answer", "无法生成回答")
             citations_raw = accumulated_state.get("citations", [])

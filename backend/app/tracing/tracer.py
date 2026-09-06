@@ -4,10 +4,12 @@
 
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-import threading
+import contextvars
+import atexit
 import json
 import os
 import uuid
@@ -15,6 +17,11 @@ import time
 import logging
 
 logger = logging.getLogger(__name__)
+
+# 上下文变量：按 asyncio Task 隔离，避免并发请求互相覆盖 trace_id / span 栈
+# 用不可变 tuple 存 span 栈，子 Task 里的 push/pop 不会污染父 Task
+_trace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("rag_trace_id", default="")
+_span_stack_var: contextvars.ContextVar[Tuple[str, ...]] = contextvars.ContextVar("rag_span_stack", default=())
 
 
 class SpanType(str, Enum):
@@ -37,6 +44,7 @@ class Span:
     span_type: str
     operation_name: str
     start_time: float
+    depth: int = 0
     end_time: float = 0
     duration_ms: float = 0
     status: str = "ok"
@@ -88,38 +96,60 @@ class Tracer:
 
     def __init__(self, storage_path: str = "./logs/traces"):
         self.storage_path = storage_path
-        self._local = threading.local()
         self._active_traces: Dict[str, Trace] = {}
         self._active_spans: Dict[str, Span] = {}
         self._completed_spans: Dict[str, List[Span]] = {}  # trace_id -> completed spans
+        self._ctx_tokens: Dict[str, Any] = {}  # trace_id -> ContextVar token（回滚用）
+        self._log_tokens: Dict[str, Any] = {}
         self._history: List[Trace] = []
         self._max_history = 1000
         os.makedirs(storage_path, exist_ok=True)
+        # 落盘挪到独立线程，避免同步 I/O 阻塞 event loop
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="trace-persist")
+        atexit.register(self._shutdown_executor)
+
+    def _shutdown_executor(self):
+        try:
+            self._executor.shutdown(wait=True)
+        except Exception:
+            pass
 
     def start_trace(self, user_query: str, request_id: str = None, task_id: str = None, session_id: str = None, metadata: Dict = None) -> str:
         trace_id = str(uuid.uuid4())[:8]
         trace = Trace(trace_id=trace_id, task_id=task_id, request_id=request_id, user_query=user_query, session_id=session_id or "", start_time=time.time(), metadata=metadata or {})
         self._active_traces[trace_id] = trace
         self._completed_spans[trace_id] = []
-        self._local.trace_id = trace_id
+        # 记录 token 以便 end_trace 精确回滚，避免并发场景下残留脏上下文
+        trace_token = _trace_id_var.set(trace_id)
+        self._ctx_tokens[trace_id] = trace_token
         # 将 trace_id 写入日志上下文
+        log_token = None
         try:
             from ..core.logging_context import trace_id_var
-            trace_id_var.set(trace_id)
+            log_token = trace_id_var.set(trace_id)
         except Exception:
             pass
+        self._log_tokens[trace_id] = log_token
         return trace_id
 
     def end_trace(self, trace_id: str, answer: str = "", sources_count: int = 0, status: str = "ok", error_message: str = ""):
         trace = self._active_traces.pop(trace_id, None)
         if not trace:
             return
-        # 清除日志上下文中的 trace_id
-        try:
-            from ..core.logging_context import trace_id_var
-            trace_id_var.set("")
-        except Exception:
-            pass
+        # 回滚上下文：只影响当前 Task，不会波及其他并发请求
+        trace_token = self._ctx_tokens.pop(trace_id, None)
+        if trace_token is not None:
+            try:
+                _trace_id_var.reset(trace_token)
+            except ValueError:
+                _trace_id_var.set("")
+        log_token = self._log_tokens.pop(trace_id, None)
+        if log_token is not None:
+            try:
+                from ..core.logging_context import trace_id_var
+                trace_id_var.reset(log_token)
+            except Exception:
+                pass
         trace.end_time = time.time()
         trace.duration_ms = (trace.end_time - trace.start_time) * 1000
         trace.answer = answer[:2000] if answer else ""
@@ -130,14 +160,31 @@ class Tracer:
         self._history.append(trace)
         if len(self._history) > self._max_history:
             self._history = self._history[-self._max_history:]
-        self._persist_trace(trace)
+        # trace 已从 active 移除并冻结，交给后台线程落盘
+        try:
+            self._executor.submit(self._persist_trace, trace)
+        except RuntimeError:
+            # executor 已关闭（进程退出中），降级为同步落盘，保证数据不丢
+            self._persist_trace(trace)
 
     @contextmanager
     def start_span(self, span_type: SpanType, operation_name: str, inputs: Dict = None):
-        trace_id = getattr(self._local, "trace_id", None)
+        trace_id = _trace_id_var.get()
+        stack = _span_stack_var.get()
+        parent_span_id = stack[-1] if stack else None
         span_id = str(uuid.uuid4())[:8]
-        span = Span(span_id=span_id, trace_id=trace_id or "", parent_span_id=None, span_type=span_type.value, operation_name=operation_name, start_time=time.time(), inputs=inputs or {})
+        span = Span(
+            span_id=span_id,
+            trace_id=trace_id or "",
+            parent_span_id=parent_span_id,
+            span_type=span_type.value,
+            operation_name=operation_name,
+            start_time=time.time(),
+            depth=len(stack),
+            inputs=inputs or {},
+        )
         self._active_spans[span_id] = span
+        token = _span_stack_var.set(stack + (span_id,))
         try:
             yield span
         except Exception as e:
@@ -148,6 +195,7 @@ class Tracer:
             span.end_time = time.time()
             span.duration_ms = (span.end_time - span.start_time) * 1000
             self._active_spans.pop(span_id, None)
+            _span_stack_var.reset(token)
             if trace_id and trace_id in self._completed_spans:
                 self._completed_spans[trace_id].append(span)
 
@@ -158,7 +206,7 @@ class Tracer:
         pass
 
     def record_tokens(self, prompt_tokens: int, completion_tokens: int):
-        trace_id = getattr(self._local, "trace_id", None)
+        trace_id = _trace_id_var.get()
         if trace_id and trace_id in self._active_traces:
             t = self._active_traces[trace_id]
             t.tokens_used["prompt"] += prompt_tokens
