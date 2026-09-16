@@ -18,6 +18,7 @@ const Sidebar: React.FC = () => {
   const navigate = useNavigate();
   const { sessions, sessionId, createSession, switchSession, deleteSession, loadSessions } = useChatStore();
   const authUsername = useAuthStore((s) => s.username);
+  const authRoleName = useAuthStore((s) => s.role_name);
   const logout = useAuthStore((s) => s.logout);
   const [hoveredSession, setHoveredSession] = React.useState<string | null>(null);
 
@@ -128,7 +129,10 @@ const Sidebar: React.FC = () => {
       <div style={styles.divider} />
       <div style={styles.userArea}>
         <div style={styles.avatar} />
-        <span style={styles.userName}>{authUsername || '未登录'}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={styles.userName}>{authUsername || '未登录'}</div>
+          {authRoleName && <div style={{ fontSize: 10, color: '#5E6E88', fontFamily: "'Inter', sans-serif" }}>{authRoleName}</div>}
+        </div>
         <div style={styles.logoutBtn} onClick={handleLogout} title="退出登录">
           <LogOut size={14} />
         </div>

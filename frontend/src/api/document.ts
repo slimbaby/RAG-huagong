@@ -1,9 +1,10 @@
 import apiClient from './client';
 import type { DocumentInfo } from '../types';
 
-export async function uploadDocument(file: File, onProgress?: (percent: number) => void): Promise<{ doc_id: string; message: string }> {
+export async function uploadDocument(file: File, scopeIds: string[] = [], onProgress?: (percent: number) => void): Promise<{ doc_id: string; message: string }> {
   const formData = new FormData();
   formData.append('file', file);
+  formData.append('scope_ids', scopeIds.join(','));
   const response = await apiClient.post('/documents/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: (progressEvent) => {
@@ -16,8 +17,10 @@ export async function uploadDocument(file: File, onProgress?: (percent: number) 
   return response.data;
 }
 
-export async function getDocuments(page: number = 1, pageSize: number = 20, fileType?: string) {
-  const response = await apiClient.get('/documents/', { params: { page, page_size: pageSize, file_type: fileType } });
+export async function getDocuments(page: number = 1, pageSize: number = 20, fileType?: string, scopeFilter?: string) {
+  const response = await apiClient.get('/documents/', {
+    params: { page, page_size: pageSize, file_type: fileType, scope_filter: scopeFilter },
+  });
   return response.data;
 }
 

@@ -50,8 +50,10 @@ class EvalCaseGenerator:
         filename: str,
         chunks: List[Dict],
         max_cases: int = 10,
+        scope_ids: List[str] = None,
     ) -> List[EvalCase]:
-        """从文档 chunks 自动生成评测用例"""
+        """从文档 chunks 自动生成评测用例。scope_ids 写入每条 case 的 metadata 便于分层评测"""
+        self._case_metadata = {"scope_ids": scope_ids or []}
         if not self.llm or not chunks:
             return []
 
@@ -134,6 +136,7 @@ class EvalCaseGenerator:
                 source_doc_id=doc_id,
                 layer="document",
                 stale=False,
+                metadata=self._case_metadata,
             )
             cases.append(case)
 

@@ -2,7 +2,7 @@
 文档管理API
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query, BackgroundTasks, Form, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -14,6 +14,9 @@ import json
 import hashlib
 import logging
 import asyncio
+
+from .auth import CurrentUser, get_current_user
+from ..services import permission_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -105,11 +108,38 @@ class DocumentInfo(BaseModel):
     upload_time: str
     status: str
     metadata: Optional[dict] = None
+    scope_ids: List[str] = []
 
 
 class DocumentListResponse(BaseModel):
     total: int
     documents: List[DocumentInfo]
+
+
+async def _enrich_with_scopes(docs: List[dict]) -> List[dict]:
+    """给文档列表批量填充 scope_ids（从 doc_scopes 表）"""
+    if not docs:
+        return docs
+    doc_ids = [d["doc_id"] for d in docs]
+    from ..core.database import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT doc_id, scope_id FROM doc_scopes WHERE doc_id = ANY($1)",
+            doc_ids,
+        )
+    scope_map: dict = {}
+    for r in rows:
+        scope_map.setdefault(r["doc_id"], []).append(r["scope_id"])
+    for d in docs:
+        d["scope_ids"] = scope_map.get(d["doc_id"], [])
+    return docs
+
+
+async def _check_doc_access(user: CurrentUser, doc_id: str):
+    """校验当前用户对文档的访问权限，无权限抛 403"""
+    if not await permission_service.user_can_access_doc(user.username, doc_id):
+        raise HTTPException(status_code=403, detail="无权访问此文档")
 
 
 async def _process_document(doc_id: str, file_path: str, file_ext: str, filename: str, file_size: int, file_hash: str = None):
@@ -180,12 +210,16 @@ async def _generate_eval_cases(doc_id: str, filename: str, chunks):
     from ..evaluation.dataset import mark_stale_by_doc_db, add_cases_to_db
     from ..core.model_config import ModelManager
     from ..services.llm_service import LLMService
+    from ..services import permission_service
 
     model_manager = ModelManager.from_env()
     llm_config = model_manager.get_best_available_model()
     if not llm_config:
         logger.info("LLM 未配置，跳过评测用例生成")
         return
+
+    # 拿文档的 scope_ids，写入评测用例元数据便于分层评测
+    scope_ids = await permission_service.get_doc_scopes(doc_id)
 
     llm = LLMService(
         api_key=llm_config.api_key,
@@ -218,7 +252,7 @@ async def _generate_eval_cases(doc_id: str, filename: str, chunks):
 
     # 生成新用例
     generator = EvalCaseGenerator(llm_client=llm)
-    new_cases = await generator.generate_from_chunks(doc_id, filename, chunk_dicts)
+    new_cases = await generator.generate_from_chunks(doc_id, filename, chunk_dicts, scope_ids=scope_ids)
 
     if new_cases:
         await add_cases_to_db(new_cases)
@@ -226,13 +260,31 @@ async def _generate_eval_cases(doc_id: str, filename: str, chunks):
 
 
 @router.post("/upload", summary="上传文档")
-async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+async def upload_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    scope_ids: str = Form(default="", description="逗号分隔的 scope_id 列表，如 'finance,hr'"),
+    user: CurrentUser = Depends(get_current_user),
+):
     from ..core.config import settings
-    logger.info(f"收到上传请求: {file.filename}")
+    logger.info(f"收到上传请求: {file.filename}, 用户={user.username}, scope_ids={scope_ids}")
     allowed_extensions = [".pdf", ".docx", ".xlsx", ".xls", ".csv", ".json", ".txt", ".md"]
     file_ext = "." + file.filename.split(".")[-1].lower() if "." in file.filename else ""
     if file_ext not in allowed_extensions:
         raise HTTPException(status_code=400, detail=f"不支持的文件类型: {file_ext}")
+
+    # 解析并校验 scope_ids
+    parsed_scopes = [s.strip() for s in scope_ids.split(",") if s.strip()]
+    user_visible = await permission_service.get_visible_scopes(user.username)
+    if user_visible is not None:
+        # 非 admin：只能上传到自己可见的 scope
+        invalid = [s for s in parsed_scopes if s not in user_visible]
+        if invalid:
+            raise HTTPException(status_code=403, detail=f"无权将文档分到 scope: {invalid}")
+    if not parsed_scopes:
+        # 未指定 scope 时默认归到 general（admin 上传时可能忘记选）
+        parsed_scopes = ["general"]
+
     try:
         content = await file.read()
         max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
@@ -279,6 +331,10 @@ async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = 
             }
             _save_metadata(meta)
 
+        # 写 doc_scopes 表（多对多绑定）
+        await permission_service.set_doc_scopes(doc_id, parsed_scopes)
+        logger.info(f"文档 {doc_id} 已绑定 scope: {parsed_scopes}")
+
         logger.info(f"文件已保存: {file_path}, hash={file_hash}")
 
         background_tasks.add_task(
@@ -289,7 +345,10 @@ async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = 
         return {
             "message": msg, "filename": file.filename, "status": "processing",
             "doc_id": doc_id, "resumed": bool(existing_doc_id),
+            "scope_ids": parsed_scopes,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         logger.error(f"文档上传失败: {e}\n{traceback.format_exc()}")
@@ -475,11 +534,12 @@ async def _index_chunks(chunks, doc_id: str = ""):
 
 
 @router.get("/{doc_id}/progress", summary="处理进度")
-async def get_document_progress(doc_id: str):
+async def get_document_progress(doc_id: str, user: CurrentUser = Depends(get_current_user)):
     meta = _load_metadata()
     doc = meta.get(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
+    await _check_doc_access(user, doc_id)
     if doc.get("status") != "processing":
         return {"status": doc.get("status"), "pages_done": 0, "pages_total": 0, "stage": "done"}
     file_hash = doc.get("file_hash")
@@ -505,35 +565,76 @@ async def get_document_progress(doc_id: str):
 async def list_documents(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    file_type: Optional[str] = None
+    file_type: Optional[str] = None,
+    scope_filter: Optional[str] = Query(default=None, description="按 scope_id 过滤"),
+    user: CurrentUser = Depends(get_current_user),
 ):
     meta = _load_metadata()
-    docs = list(meta.values())
+    all_docs = list(meta.values())
+
+    # 一次查清：所有已绑定 scope 的 doc_id 集合
+    from ..core.database import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        all_doc_ids = [d["doc_id"] for d in all_docs]
+        bound_rows = await conn.fetch(
+            "SELECT DISTINCT doc_id FROM doc_scopes WHERE doc_id = ANY($1)",
+            all_doc_ids or ["__none__"],
+        )
+        bound_ids_set = {r["doc_id"] for r in bound_rows}
+
+    # 1) 按用户角色可见 scope 过滤
+    #    - admin (scope_ids 含 "all")：看全部
+    #    - 普通用户：看自己 scope 内的 + 未绑定 scope 的历史文档（向后兼容）
+    accessible_ids = await permission_service.get_accessible_doc_ids(user.username)
+    if accessible_ids is not None:
+        all_docs = [
+            d for d in all_docs
+            if d["doc_id"] in accessible_ids or d["doc_id"] not in bound_ids_set
+        ]
+
+    # 2) 前端下拉：进一步按具体 scope 筛选（仅在用户可见范围内）
+    if scope_filter:
+        async with pool.acquire() as conn:
+            scope_rows = await conn.fetch(
+                "SELECT doc_id FROM doc_scopes WHERE scope_id = $1", scope_filter
+            )
+            scope_doc_ids = {r["doc_id"] for r in scope_rows}
+        all_docs = [d for d in all_docs if d["doc_id"] in scope_doc_ids]
+
     if file_type:
-        docs = [d for d in docs if d.get("file_type") == file_type]
-    docs.sort(key=lambda d: d.get("upload_time", ""), reverse=True)
-    total = len(docs)
+        all_docs = [d for d in all_docs if d.get("file_type") == file_type]
+    all_docs.sort(key=lambda d: d.get("upload_time", ""), reverse=True)
+
+    # 批量填充 scope_ids
+    all_docs = await _enrich_with_scopes(all_docs)
+
+    total = len(all_docs)
     start = (page - 1) * page_size
     end = start + page_size
-    return DocumentListResponse(total=total, documents=docs[start:end])
+    return DocumentListResponse(total=total, documents=all_docs[start:end])
 
 
 @router.get("/{doc_id}", summary="文档详情")
-async def get_document(doc_id: str):
+async def get_document(doc_id: str, user: CurrentUser = Depends(get_current_user)):
     meta = _load_metadata()
     doc = meta.get(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
+    await _check_doc_access(user, doc_id)
+    doc = dict(doc)
+    doc["scope_ids"] = await permission_service.get_doc_scopes(doc_id)
     return doc
 
 
 @router.get("/{doc_id}/download", summary="下载文档")
-async def download_document(doc_id: str):
+async def download_document(doc_id: str, user: CurrentUser = Depends(get_current_user)):
     from ..core.config import settings
     meta = _load_metadata()
     doc = meta.get(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
+    await _check_doc_access(user, doc_id)
     file_path = doc.get("file_path")
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -545,11 +646,12 @@ async def download_document(doc_id: str):
 
 
 @router.delete("/{doc_id}", summary="删除文档")
-async def delete_document(doc_id: str):
+async def delete_document(doc_id: str, user: CurrentUser = Depends(get_current_user)):
     meta = _load_metadata()
     doc = meta.get(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
+    await _check_doc_access(user, doc_id)
     try:
         from ..vectorstore.shared_store import get_shared_store
         store = get_shared_store()
@@ -571,18 +673,30 @@ async def delete_document(doc_id: str):
     except Exception as e:
         logger.warning(f"标记评测用例失效失败: {e}")
 
+    # 清理 doc_scopes 绑定
+    from ..core.database import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM doc_scopes WHERE doc_id = $1", doc_id)
+
     del meta[doc_id]
     _save_metadata(meta)
     return {"message": "文档已删除", "doc_id": doc_id}
 
 
 @router.post("/{doc_id}/reupload", summary="重新上传文档（覆盖更新）")
-async def reupload_document(doc_id: str, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+async def reupload_document(
+    doc_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(get_current_user),
+):
     from ..core.config import settings
     meta = _load_metadata()
     old_doc = meta.get(doc_id)
     if not old_doc:
         raise HTTPException(status_code=404, detail="文档不存在")
+    await _check_doc_access(user, doc_id)
 
     allowed_extensions = [".pdf", ".docx", ".xlsx", ".xls", ".csv", ".json", ".txt", ".md"]
     file_ext = "." + file.filename.split(".")[-1].lower() if "." in file.filename else ""
@@ -635,11 +749,12 @@ async def reupload_document(doc_id: str, background_tasks: BackgroundTasks, file
 
 
 @router.get("/{doc_id}/chunks", summary="文档分块详情")
-async def get_document_chunks(doc_id: str):
+async def get_document_chunks(doc_id: str, user: CurrentUser = Depends(get_current_user)):
     meta = _load_metadata()
     doc = meta.get(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
+    await _check_doc_access(user, doc_id)
     try:
         from ..vectorstore.shared_store import get_shared_store
         store = get_shared_store()
@@ -648,3 +763,33 @@ async def get_document_chunks(doc_id: str):
     except Exception as e:
         logger.warning(f"查询chunks失败: {e}")
         return {"doc_id": doc_id, "chunks": [], "total": 0}
+
+
+# ── 文档 scope 管理（admin 专属） ──
+
+@router.get("/{doc_id}/scopes", summary="文档的 scope 列表")
+async def get_doc_scope_list(doc_id: str, user: CurrentUser = Depends(get_current_user)):
+    meta = _load_metadata()
+    if doc_id not in meta:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    await _check_doc_access(user, doc_id)
+    return {"doc_id": doc_id, "scope_ids": await permission_service.get_doc_scopes(doc_id)}
+
+
+class SetDocScopesRequest(BaseModel):
+    scope_ids: List[str]
+
+
+@router.put("/{doc_id}/scopes", summary="修改文档 scope（admin）")
+async def set_doc_scope(
+    doc_id: str,
+    req: SetDocScopesRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    if user.role_id != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可修改文档 scope")
+    meta = _load_metadata()
+    if doc_id not in meta:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    await permission_service.set_doc_scopes(doc_id, req.scope_ids)
+    return {"doc_id": doc_id, "scope_ids": req.scope_ids}

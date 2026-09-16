@@ -2,7 +2,7 @@
 聊天API - 基于LangGraph Agent
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
@@ -14,6 +14,7 @@ import json
 import uuid as uuid_lib
 
 from ..tracing.tracer import SpanType
+from .auth import CurrentUser, get_current_user
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -219,10 +220,24 @@ class ChatResponse(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
+async def _build_scope_context(user: CurrentUser):
+    """从当前用户解析出检索侧需要的权限上下文：
+    - allowed_doc_ids: Milvus 检索时过滤的 doc_id 集合；None 表示 admin 看全部
+    - user_visible_scopes: 用户可见的 scope 列表；None 表示 admin
+    """
+    from ..services import permission_service
+    visible = await permission_service.get_visible_scopes(user.username)
+    if visible is None:
+        return None, None  # admin，不过滤
+    allowed = await permission_service.get_accessible_doc_ids(user.username)
+    return allowed, visible
+
+
 @router.post("/query", response_model=ChatResponse, summary="知识库问答")
-async def chat_query(request: ChatRequest):
+async def chat_query(request: ChatRequest, user: CurrentUser = Depends(get_current_user)):
     task_id = str(uuid_lib.uuid4())[:8]
     session_id = request.session_id or str(uuid_lib.uuid4())[:8]
+    allowed_doc_ids, user_visible_scopes = await _build_scope_context(user)
 
     if request.use_agent:
         graph = get_agent_graph()
@@ -253,11 +268,15 @@ async def chat_query(request: ChatRequest):
             "user_query": request.question,
             "session_id": session_id,
             "task_id": task_id,
+            "allowed_doc_ids": allowed_doc_ids,
+            "user_visible_scopes": user_visible_scopes,
+            "denied_scope_hints": [],
             "optimized_query": None,
             "query_type": None,
             "intent": None,
             "keywords": [],
             "expanded_queries": [],
+            "sub_queries": [],
             "query_vector": None,
             "raw_results": [],
             "filtered_results": [],
@@ -271,7 +290,7 @@ async def chat_query(request: ChatRequest):
             "tool_results": [],
         }
 
-        logger.info(f"[chat_query] initial_state user_query='{initial_state.get('user_query', '')}', state keys: {list(initial_state.keys())}")
+        logger.info(f"[chat_query] initial_state user_query='{initial_state.get('user_query', '')}', user={user.username}, allowed_doc_ids={'all' if allowed_doc_ids is None else len(allowed_doc_ids)}")
         # 根 span：让后续所有节点 span 挂到它下面，形成真正的父子链路
         root_cm = (
             tracer.start_span(SpanType.REQUEST, "chat_query", inputs={"question": request.question, "session_id": session_id})
@@ -343,16 +362,26 @@ async def chat_query(request: ChatRequest):
         )
 
 
-def _build_initial_state(question: str, session_id: str, task_id: str) -> Dict:
+def _build_initial_state(
+    question: str,
+    session_id: str,
+    task_id: str,
+    allowed_doc_ids=None,
+    user_visible_scopes=None,
+) -> Dict:
     return {
         "user_query": question,
         "session_id": session_id,
         "task_id": task_id,
+        "allowed_doc_ids": allowed_doc_ids,
+        "user_visible_scopes": user_visible_scopes,
+        "denied_scope_hints": [],
         "optimized_query": None,
         "query_type": None,
         "intent": None,
         "keywords": [],
         "expanded_queries": [],
+        "sub_queries": [],
         "query_vector": None,
         "raw_results": [],
         "filtered_results": [],
@@ -383,9 +412,10 @@ def _format_citations(citations_raw: List) -> List[CitationInfo]:
 
 
 @router.post("/query/stream", summary="知识库问答（SSE流式）")
-async def chat_query_stream(request: ChatRequest):
+async def chat_query_stream(request: ChatRequest, user: CurrentUser = Depends(get_current_user)):
     task_id = str(uuid_lib.uuid4())[:8]
     session_id = request.session_id or str(uuid_lib.uuid4())[:8]
+    allowed_doc_ids, user_visible_scopes = await _build_scope_context(user)
 
     if request.use_agent:
         graph = get_agent_graph()
@@ -411,7 +441,11 @@ async def chat_query_stream(request: ChatRequest):
                     session_id=session_id,
                 )
 
-            initial_state = _build_initial_state(request.question, session_id, task_id)
+            initial_state = _build_initial_state(
+                request.question, session_id, task_id,
+                allowed_doc_ids=allowed_doc_ids,
+                user_visible_scopes=user_visible_scopes,
+            )
             accumulated_state = dict(initial_state)
 
             from ..agents.graph import extract_span_outputs

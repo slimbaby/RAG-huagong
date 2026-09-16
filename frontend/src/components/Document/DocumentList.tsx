@@ -1,17 +1,44 @@
-import React, { useEffect } from 'react';
-import { Table, Tag, Button, Space, Modal, message } from 'antd';
+import React, { useEffect, useState } from 'react';
+import { Table, Tag, Button, Space, Modal, message, Select } from 'antd';
 import { DeleteOutlined, DownloadOutlined, ReloadOutlined, FileTextOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useDocumentStore } from '../../stores/documentStore';
 import { downloadDocument } from '../../api/document';
-import type { DocumentInfo } from '../../types';
+import { getScopes } from '../../api/scopes';
+import type { DocumentInfo, ScopeInfo } from '../../types';
+
+const SCOPE_NAME_MAP: Record<string, string> = {
+  finance: '财务',
+  hr: '人力资源',
+  production_scheduling: '排单生产',
+  safety: '安全环保',
+  quality: '质量',
+  general: '综合',
+};
+
+const SCOPE_COLOR_MAP: Record<string, string> = {
+  finance: '#FBBF24',
+  hr: '#8B5CF6',
+  production_scheduling: '#34D399',
+  safety: '#EF4444',
+  quality: '#4F8CFF',
+  general: '#94A3B8',
+};
 
 const DocumentList: React.FC = () => {
   const { documents, isLoading, fetchDocuments, removeDocument, reuploadFile } = useDocumentStore();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const [reuploadDocId, setReuploadDocId] = React.useState<string | null>(null);
+  const [reuploadDocId, setReuploadDocId] = useState<string | null>(null);
+  const [scopes, setScopes] = useState<ScopeInfo[]>([]);
+  const [scopeFilter, setScopeFilter] = useState<string | undefined>(undefined);
 
-  useEffect(() => { fetchDocuments(); }, [fetchDocuments]);
+  useEffect(() => {
+    getScopes().then(setScopes).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetchDocuments(scopeFilter);
+  }, [scopeFilter, fetchDocuments]);
 
   const handleDelete = async (docId: string) => {
     try { await removeDocument(docId); message.success('文档已删除'); } catch (error) { message.error('删除失败'); }
@@ -72,6 +99,23 @@ const DocumentList: React.FC = () => {
     return <Tag style={{ background: c.bg, border: `1px solid ${c.border}`, color: c.text, borderRadius: 4 }}>{type.toUpperCase()}</Tag>;
   };
 
+  const renderScopeTags = (scopeIds: string[] = []) => {
+    if (!scopeIds.length) return <span style={{ color: '#5E6E88', fontSize: 12 }}>未分配</span>;
+    return (
+      <Space size={2} wrap>
+        {scopeIds.map((sid) => {
+          const color = SCOPE_COLOR_MAP[sid] || '#94A3B8';
+          const name = SCOPE_NAME_MAP[sid] || sid;
+          return (
+            <Tag key={sid} style={{ background: `${color}15`, border: `1px solid ${color}30`, color, borderRadius: 4, fontSize: 11 }}>
+              {name}
+            </Tag>
+          );
+        })}
+      </Space>
+    );
+  };
+
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -82,6 +126,7 @@ const DocumentList: React.FC = () => {
     { title: '文件名', dataIndex: 'filename', key: 'filename', render: (text) => <Space><FileTextOutlined style={{ color: '#5E6E88' }} /><span style={{ color: '#E4EBF5' }}>{text}</span></Space> },
     { title: '类型', dataIndex: 'file_type', key: 'file_type', width: 80, render: (type) => getFileTypeTag(type) },
     { title: '大小', dataIndex: 'file_size', key: 'file_size', width: 100, render: (size) => <span style={{ color: '#94A3B8' }}>{formatFileSize(size)}</span> },
+    { title: '分组', dataIndex: 'scope_ids', key: 'scope_ids', width: 180, render: (ids) => renderScopeTags(ids) },
     { title: '分块数', dataIndex: 'chunk_count', key: 'chunk_count', width: 80, render: (count) => <span style={{ color: '#94A3B8' }}>{count}</span> },
     { title: '状态', dataIndex: 'status', key: 'status', width: 80, render: (status) => getStatusTag(status) },
     { title: '上传时间', dataIndex: 'upload_time', key: 'upload_time', width: 180, render: (time) => <span style={{ color: '#94A3B8', fontSize: 12 }}>{new Date(time).toLocaleString()}</span> },
@@ -98,7 +143,20 @@ const DocumentList: React.FC = () => {
     <div style={styles.container}>
       <div style={styles.header}>
         <span style={styles.headerTitle}>知识库文档</span>
-        <Button icon={<ReloadOutlined />} onClick={fetchDocuments} loading={isLoading} style={styles.refreshBtn}>刷新</Button>
+        <Space>
+          <Select
+            placeholder="按分组筛选"
+            allowClear
+            style={{ width: 160 }}
+            value={scopeFilter}
+            onChange={(v) => setScopeFilter(v)}
+            options={[
+              { label: '全部', value: '' },
+              ...scopes.map((s) => ({ label: s.name, value: s.scope_id })),
+            ]}
+          />
+          <Button icon={<ReloadOutlined />} onClick={() => fetchDocuments(scopeFilter)} loading={isLoading} style={styles.refreshBtn}>刷新</Button>
+        </Space>
       </div>
       <input ref={fileInputRef} type="file" style={{ display: 'none' }} onChange={handleReuploadFile} />
       <div style={styles.tableWrapper}>

@@ -99,10 +99,61 @@ async def _init_tables(pool: asyncpg.Pool):
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        # ── RBAC 权限表 ──
+        # 角色表：role_id 是扁平标识（如 'finance'/'hr'/'production'/'admin'），
+        # scope_ids 是该角色可见的 scope 列表；含 "all" 表示可见全部
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS roles (
+                role_id VARCHAR(32) PRIMARY KEY,
+                role_name VARCHAR(64) NOT NULL,
+                scope_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        # 用户-角色关联（多对一；预留扩展多角色）
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_roles (
+                username VARCHAR(64) NOT NULL,
+                role_id VARCHAR(32) NOT NULL REFERENCES roles(role_id) ON DELETE CASCADE,
+                PRIMARY KEY (username, role_id)
+            )
+        """)
+        # 文档-scope 多对多关联（一个文档可属于多个 scope）
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS doc_scopes (
+                doc_id VARCHAR(64) NOT NULL,
+                scope_id VARCHAR(64) NOT NULL,
+                PRIMARY KEY (doc_id, scope_id)
+            )
+        """)
+
         # 索引
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_eval_cases_layer ON eval_cases(layer)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_eval_cases_doc ON eval_cases(source_doc_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_eval_cases_stale ON eval_cases(stale)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_eval_reports_time ON eval_reports(created_at DESC)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_doc_scopes_scope ON doc_scopes(scope_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role_id)")
+
+    # 幂等：老库 users 表没有 role_id 列时补一个（向后兼容，已废弃但仍保留）
+    try:
+        async with pool.acquire() as conn:
+            cols = await conn.fetch("SELECT column_name FROM information_schema.columns WHERE table_name='users'")
+            if not any(c["column_name"] == "role_id" for c in cols):
+                await conn.execute("ALTER TABLE users ADD COLUMN role_id VARCHAR(32) DEFAULT 'admin'")
+                logger.info("users 表补齐 role_id 列（默认 admin）")
+    except Exception as e:
+        logger.warning(f"users 表补齐 role_id 失败: {e}")
+
+    # 预置 admin 角色（scope_ids=["all"] 表示可见全部）
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO roles (role_id, role_name, scope_ids)
+                VALUES ('admin', '管理员', '["all"]'::jsonb)
+                ON CONFLICT (role_id) DO NOTHING
+            """)
+    except Exception as e:
+        logger.warning(f"预置 admin 角色失败: {e}")
 
     logger.info("评测数据表初始化完成")

@@ -33,6 +33,7 @@ class OptimizedQuery:
     optimization_notes: List[str]
     intent: str = "kb_query"  # "kb_query" | "general"
     usage: Dict = None  # {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    sub_queries: List[str] = None  # 比较类查询分解出的子查询列表
 
 
 class QueryRewriter:
@@ -86,12 +87,24 @@ class QueryRewriter:
                 original=raw_query, rewritten=normalized, expanded_queries=[],
                 query_type=query_type, keywords=keywords, intent_confidence=confidence,
                 optimization_notes=optimization_notes, intent=intent, usage=total_usage,
+                sub_queries=[],
             )
+        sub_queries = []
         if self.llm:
-            (rewritten, route_from_llm, rewrite_usage), (expanded, expand_usage) = await asyncio.gather(
-                self._llm_rewrite_and_route(normalized, query_type, keywords),
-                self._expand_queries(normalized, query_type),
-            )
+            if query_type == QueryType.COMPARISON:
+                # 比较类：单次 LLM 调用（改写+路由+分解），跳过 _expand_queries 节省一次调用
+                (rewritten, route_from_llm, sub_queries, rewrite_usage) = \
+                    await self._llm_rewrite_and_route(normalized, query_type, keywords)
+                expanded = []
+                expand_usage = {}
+                logger.info(f"[optimize] COMPARISON sub_queries={sub_queries}")
+            else:
+                # 非比较类：保持原有并行调用
+                (rewritten, route_from_llm, _, rewrite_usage), (expanded, expand_usage) = \
+                    await asyncio.gather(
+                        self._llm_rewrite_and_route(normalized, query_type, keywords),
+                        self._expand_queries(normalized, query_type),
+                    )
             logger.info(f"[optimize] llm_rewritten='{rewritten}', route_from_llm='{route_from_llm}'")
             if rewritten:
                 if rewritten != normalized:
@@ -108,6 +121,7 @@ class QueryRewriter:
             else:
                 rewritten = normalized
                 expand_usage = rewrite_usage
+                sub_queries = []
                 optimization_notes.append("LLM改写失败，使用原始查询")
             for k in total_usage:
                 total_usage[k] += rewrite_usage.get(k, 0)
@@ -119,8 +133,10 @@ class QueryRewriter:
             total_usage[k] += expand_usage.get(k, 0)
         if expanded:
             optimization_notes.append(f"查询扩展：生成{len(expanded)}个变体")
+        if sub_queries:
+            optimization_notes.append(f"子查询分解：{len(sub_queries)}个子查询 {sub_queries}")
         logger.info(f"[optimize] final rewritten='{rewritten}', intent={intent}")
-        return OptimizedQuery(original=raw_query, rewritten=rewritten, expanded_queries=expanded, query_type=query_type, keywords=keywords, intent_confidence=confidence, optimization_notes=optimization_notes, intent=intent, usage=total_usage)
+        return OptimizedQuery(original=raw_query, rewritten=rewritten, expanded_queries=expanded, query_type=query_type, keywords=keywords, intent_confidence=confidence, optimization_notes=optimization_notes, intent=intent, usage=total_usage, sub_queries=sub_queries)
 
     def _basic_clean(self, text: str) -> str:
         text = re.sub(r'\s+', ' ', text)
@@ -142,7 +158,7 @@ class QueryRewriter:
             return QueryType.TROUBLESHOOTING, 0.8
         if any(kw in query_lower for kw in ['怎么做', '步骤', '方法', '流程', '操作']):
             return QueryType.PROCEDURAL, 0.8
-        if any(kw in query_lower for kw in ['区别', '对比', '比较', '哪个']):
+        if any(kw in query_lower for kw in ['区别', '对比', '比较', '哪个', '谁大', '谁小', '谁高', '谁低', '谁多', '谁少', '谁更', '谁最', '更大', '更小', '更高', '更低', '最多', '最少']):
             return QueryType.COMPARISON, 0.8
         if any(kw in query_lower for kw in ['规定', '标准', '要求', '法规', '规范']):
             return QueryType.REGULATORY, 0.8
@@ -216,8 +232,8 @@ class QueryRewriter:
             logger.warning(f"LLM rewrite failed: {e}")
             return query, {}
 
-    async def _llm_rewrite_and_route(self, query: str, query_type: QueryType, keywords: List[str]) -> Tuple[str, str, dict]:
-        """LLM改写 + 路由分类（合并为单次调用以降低延迟）。返回 (rewritten, route, usage)；失败时 route=''。"""
+    async def _llm_rewrite_and_route(self, query: str, query_type: QueryType, keywords: List[str]) -> Tuple[str, str, List[str], dict]:
+        """LLM改写 + 路由分类 + 子查询分解（比较类）。返回 (rewritten, route, sub_queries, usage)；失败时 route=''。"""
         prompt = f"""你是化工领域查询优化专家。优化用户查询用于知识库检索，并同时判断该问题的路由。
 
 原始查询：{query}
@@ -232,9 +248,19 @@ class QueryRewriter:
 
 路由判断（route 字段）：
 - "kb_query"：答案可能存在于企业知识库文档中（人员信息、制度规范、设备工艺等）
-- "general"：纯闲聊、常识、时事等与知识库无关的问题
+- "general"：纯闲聊、常识、时事等与知识库无关的问题"""
 
-只返回 JSON：{{"rewritten": "...", "route": "kb_query" 或 "general"}}"""
+        if query_type == QueryType.COMPARISON:
+            prompt += """
+
+子查询分解（sub_queries 字段）：
+这是一个比较类查询。请将查询分解为多个子查询，每个子查询针对一个待比较的实体，用于独立检索该实体的信息。
+例如："张三、李四、王五哪个年龄最大？" → ["张三的年龄", "李四的年龄", "王五的年龄"]
+如果不需要分解，返回空数组。"""
+
+        prompt += """
+
+只返回 JSON：{"rewritten": "...", "route": "kb_query" 或 "general", "sub_queries": [...]}"""
         try:
             result = await self.llm.generate(prompt)
             text = result.get("text", "") if isinstance(result, dict) else str(result)
@@ -244,12 +270,21 @@ class QueryRewriter:
                 data = json.loads(m.group())
                 rewritten = (data.get("rewritten") or "").strip()
                 route = (data.get("route") or "").strip()
+                # 提取子查询
+                raw_subs = data.get("sub_queries") or []
+                seen = set()
+                sub_queries = []
+                for sq in raw_subs:
+                    sq = (sq or "").strip()
+                    if sq and sq not in seen:
+                        seen.add(sq)
+                        sub_queries.append(sq)
                 if rewritten:
-                    return rewritten, route if route in ("kb_query", "general") else "", usage
-            return "", "", usage
+                    return rewritten, route if route in ("kb_query", "general") else "", sub_queries[:5], usage
+            return "", "", [], usage
         except Exception as e:
             logger.warning(f"LLM rewrite+route failed: {e}")
-            return "", "", {}
+            return "", "", [], {}
 
     async def _expand_queries(self, query: str, query_type: QueryType) -> List[str]:
         prompt = f"""基于以下查询，生成3个不同角度的查询变体，用于提升知识库检索召回率。

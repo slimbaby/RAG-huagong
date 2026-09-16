@@ -7,8 +7,8 @@ interface DocumentState {
   uploadProgress: UploadProgress[];
   isLoading: boolean;
   error: string | null;
-  fetchDocuments: () => Promise<void>;
-  uploadFile: (file: File) => Promise<void>;
+  fetchDocuments: (scopeFilter?: string) => Promise<void>;
+  uploadFile: (file: File, scopeIds?: string[]) => Promise<void>;
   reuploadFile: (docId: string, file: File) => Promise<void>;
   removeDocument: (docId: string) => Promise<void>;
   clearUploadProgress: () => void;
@@ -20,22 +20,22 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   isLoading: false,
   error: null,
 
-  fetchDocuments: async () => {
+  fetchDocuments: async (scopeFilter?: string) => {
     set({ isLoading: true, error: null });
     try {
-      const response = await getDocuments();
+      const response = await getDocuments(1, 100, undefined, scopeFilter || undefined);
       set({ documents: response.documents || [], isLoading: false });
     } catch (error: any) {
       set({ isLoading: false, error: error.message || '获取文档列表失败' });
     }
   },
 
-  uploadFile: async (file: File) => {
+  uploadFile: async (file: File, scopeIds: string[] = []) => {
     set((state) => ({
       uploadProgress: [...state.uploadProgress, { filename: file.name, progress: 0, status: 'uploading' }],
     }));
     try {
-      const result = await uploadDocument(file, (progress: number) => {
+      const result = await uploadDocument(file, scopeIds, (progress: number) => {
         set((state) => ({
           uploadProgress: state.uploadProgress.map((p) =>
             p.filename === file.name && p.status === 'uploading'

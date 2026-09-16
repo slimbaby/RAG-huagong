@@ -3,6 +3,7 @@ LangGraph节点函数 - RAG流程的各个步骤
 """
 
 from typing import Dict, Any, List, Optional
+import asyncio
 import contextlib
 import json
 import logging
@@ -63,6 +64,7 @@ async def query_optimize_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "query_type": "factual",
             "keywords": [],
             "expanded_queries": [],
+            "sub_queries": [],
         }
 
     try:
@@ -84,6 +86,7 @@ async def query_optimize_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "intent": optimized.intent,
             "keywords": optimized.keywords,
             "expanded_queries": optimized.expanded_queries or [],
+            "sub_queries": optimized.sub_queries or [],
         }
     except Exception as e:
         logger.error(f"Query optimization failed: {e}")
@@ -93,6 +96,7 @@ async def query_optimize_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "intent": "kb_query",
             "keywords": [],
             "expanded_queries": [],
+            "sub_queries": [],
             "error": f"查询优化失败: {str(e)}",
         }
 
@@ -126,35 +130,70 @@ async def retrieval_node(state: Dict[str, Any]) -> Dict[str, Any]:
     optimized_query = state.get("optimized_query") or user_query
     query_vector = state.get("query_vector")
     expanded_queries = state.get("expanded_queries", [])
+    sub_queries = state.get("sub_queries", [])
+    # RBAC: 用户可见 doc_id 集合（None = admin 不过滤）
+    allowed_doc_ids = state.get("allowed_doc_ids")
 
-    logger.info(f"[retrieval_node] state keys: {list(state.keys())}, user_query='{user_query}', optimized_query='{optimized_query}'")
-
-    logger.info(f"[retrieval_node] optimized_query='{optimized_query}', query_vector={'有' if query_vector else '无'}, expanded_queries={len(expanded_queries)}")
+    logger.info(f"[retrieval_node] optimized_query='{optimized_query}', query_vector={'有' if query_vector else '无'}, expanded_queries={len(expanded_queries)}, sub_queries={sub_queries}, allowed_doc_ids={'all' if allowed_doc_ids is None else len(allowed_doc_ids)}")
 
     if not hybrid_store:
         logger.warning("[retrieval_node] hybrid_store为空，跳过检索")
         return {"raw_results": [], "filtered_results": []}
 
-    try:
-        with _tracer_span(tracer, SpanType.RETRIEVAL, "hybrid_search", {"query": optimized_query, "top_k": 20}) as sp:
-            results = await hybrid_store.hybrid_search(
-                query=optimized_query,
-                query_vector=query_vector,
-                top_k=20
-            )
-            if sp is not None:
-                sp.set_attribute("result_count", len(results))
-        logger.info(f"[retrieval_node] hybrid_search返回 {len(results)} 条结果")
+    # 空集合表示用户没有任何可见文档，直接返回
+    if allowed_doc_ids is not None and len(allowed_doc_ids) == 0:
+        logger.info("[retrieval_node] 用户无任何可见文档，跳过检索")
+        return {"raw_results": [], "filtered_results": []}
 
-        # If not enough results, try expanded queries
-        if len(results) < 3 and expanded_queries and embedding_service:
-            for eq in expanded_queries[:2]:
-                with _tracer_span(tracer, SpanType.RETRIEVAL, "expanded_search", {"query": eq}):
-                    eq_vector = await embedding_service.embed_query(eq)
-                    eq_results = await hybrid_store.hybrid_search(
-                        query=eq, query_vector=eq_vector, top_k=5
-                    )
-                results.extend(eq_results)
+    try:
+        if sub_queries and embedding_service:
+            # 比较类查询分解：主查询 + 子查询并行检索
+            logger.info(f"[retrieval_node] comparison decomposition: {len(sub_queries)} sub-queries: {sub_queries}")
+
+            async def _search_with_embed(query_text: str, top_k: int, existing_vector=None):
+                """Embed + search for a single query."""
+                qv = existing_vector if existing_vector is not None else await embedding_service.embed_query(query_text)
+                return await hybrid_store.hybrid_search(
+                    query=query_text, query_vector=qv, top_k=top_k,
+                    allowed_doc_ids=allowed_doc_ids,
+                )
+
+            # 并行任务：主查询（用已有向量）+ 各子查询（需独立 embedding）
+            tasks = [_search_with_embed(optimized_query, 10, existing_vector=query_vector)]
+            for sq in sub_queries:
+                tasks.append(_search_with_embed(sq, 8))
+
+            with _tracer_span(tracer, SpanType.RETRIEVAL, "parallel_comparison_search", {"sub_queries": sub_queries}):
+                search_results = await asyncio.gather(*tasks)
+
+            # 合并所有结果
+            results = []
+            for sr in search_results:
+                results.extend(sr)
+            logger.info(f"[retrieval_node] parallel comparison search: {len(results)} total results from {len(tasks)} searches")
+        else:
+            # 原有路径：单查询检索
+            with _tracer_span(tracer, SpanType.RETRIEVAL, "hybrid_search", {"query": optimized_query, "top_k": 20}) as sp:
+                results = await hybrid_store.hybrid_search(
+                    query=optimized_query,
+                    query_vector=query_vector,
+                    top_k=20,
+                    allowed_doc_ids=allowed_doc_ids,
+                )
+                if sp is not None:
+                    sp.set_attribute("result_count", len(results))
+            logger.info(f"[retrieval_node] hybrid_search返回 {len(results)} 条结果")
+
+            # If not enough results, try expanded queries
+            if len(results) < 3 and expanded_queries and embedding_service:
+                for eq in expanded_queries[:2]:
+                    with _tracer_span(tracer, SpanType.RETRIEVAL, "expanded_search", {"query": eq}):
+                        eq_vector = await embedding_service.embed_query(eq)
+                        eq_results = await hybrid_store.hybrid_search(
+                            query=eq, query_vector=eq_vector, top_k=5,
+                            allowed_doc_ids=allowed_doc_ids,
+                        )
+                    results.extend(eq_results)
 
         # Deduplicate
         seen_ids = set()
@@ -235,6 +274,64 @@ GENERAL_PROMPT = """你是化工园区知识库助手。用户的问题不涉及
 ## 回答
 """
 
+COMPARISON_PROMPT = """你是化工园区知识库助手。基于以下参考资料回答用户的比较类问题。
+
+## 回答要求
+1. 基于参考资料回答，不要编造信息
+2. 在回答中必须标注引用来源，格式为 [来源X]
+3. 引用格式：[来源N: 文件名, 第M页]
+4. 请先分别列出每个被比较实体的相关信息，然后进行对比分析
+5. 最后给出明确的结论，直接回答用户的比较问题
+6. 如果参考资料中缺少某个实体的信息，明确说明"知识库中未找到XX的相关信息"
+7. **对于法律法规类引用，必须注明发布/生效日期和知识库更新时间**
+
+## 参考资料
+{context}
+
+## 问题
+{question}
+
+## 回答
+"""
+
+
+async def _probe_denied_scopes(state: Dict[str, Any], query: str) -> List[str]:
+    """在用户 scope 之外做一次轻量探测（top_k=3，不过滤），
+    返回「本应命中但被权限拦截」的 scope 显示名列表。空列表表示没有越权内容。"""
+    deps = state.get("_deps", {})
+    hybrid_store = deps.get("hybrid_store")
+    embedding_service = deps.get("embedding_service")
+    user_visible_scopes = state.get("user_visible_scopes") or []
+    if not hybrid_store or not embedding_service:
+        return []
+    try:
+        qv = await embedding_service.embed_query(query)
+        # 不带 scope 过滤做一次轻量检索
+        probe = await hybrid_store.hybrid_search(query=query, query_vector=qv, top_k=3, allowed_doc_ids=None)
+        if not probe:
+            return []
+        # 收集命中结果的 doc_id → 查 scope
+        from ..services import permission_service
+        seen_scopes = set()
+        hints = []
+        for r in probe[:3]:
+            doc_id = (r.get("metadata") or {}).get("doc_id") if isinstance(r, dict) else None
+            if not doc_id:
+                continue
+            doc_scopes = await permission_service.get_doc_scopes(doc_id)
+            for sid in doc_scopes:
+                if sid in seen_scopes or sid in user_visible_scopes:
+                    continue
+                seen_scopes.add(sid)
+                # 把 scope_id 翻译成显示名
+                from ..services.permission_service import BUILTIN_SCOPES
+                name_map = {s["scope_id"]: s["name"] for s in BUILTIN_SCOPES}
+                hints.append(name_map.get(sid, sid))
+        return hints
+    except Exception as e:
+        logger.warning(f"scope 兜底探测失败: {e}")
+        return []
+
 
 async def _chat_with_tools(llm_client, messages, tools_schema, tool_registry, max_rounds=2):
     """带工具调用循环的对话。返回 {"text", "usage", "tool_trace": [...]}"""
@@ -282,10 +379,14 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
     optimized_query = state.get("optimized_query") or state.get("user_query", "")
     filtered_results = state.get("filtered_results", [])
     intent = state.get("intent", "kb_query")
+    query_type = state.get("query_type", "factual")
     retrieval_confident = state.get("retrieval_confident", True)
     session_id = state.get("session_id", "")
     tracer = deps.get("tracer")
     tool_registry = deps.get("tool_registry")
+    # RBAC 兜底：检索为空时探测其他 scope 是否有结果
+    user_visible_scopes = state.get("user_visible_scopes")
+    denied_scope_hints = list(state.get("denied_scope_hints") or [])
 
     if not llm_client:
         return {
@@ -306,6 +407,16 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 kb_context = "\n\n".join([r.get("content", "") for r in filtered_results])
             logger.info(f"[generate_node] optimized_query='{optimized_query}', filtered_results={len(filtered_results)}条, context长度={len(kb_context)}")
 
+        # ── scope 越权兜底：检索为空 + 用户有 scope 限制 → 探测其他 scope 是否有结果 ──
+        if (
+            not filtered_results
+            and intent == "kb_query"
+            and user_visible_scopes is not None
+            and "all" not in (user_visible_scopes or [])
+            and not denied_scope_hints
+        ):
+            denied_scope_hints = await _probe_denied_scopes(state, optimized_query)
+
         if memory_manager and session_id:
             messages, relevant_memories = await memory_manager.build_context(
                 session_id=session_id,
@@ -313,6 +424,7 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 kb_context=kb_context,
                 intent=intent,
                 retrieval_confident=retrieval_confident,
+                query_type=query_type,
             )
             logger.info(f"[generate_node] 使用记忆模式, messages={len(messages)}条, 长期记忆={len(relevant_memories)}条")
             if tool_registry:
@@ -322,11 +434,13 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
         else:
             if use_general:
                 prompt = GENERAL_PROMPT.format(question=optimized_query)
+            elif query_type == "comparison":
+                prompt = COMPARISON_PROMPT.format(context=kb_context, question=optimized_query)
             else:
                 prompt = RAG_PROMPT_WITH_CITATION_AND_TIME.format(
                     context=kb_context, question=optimized_query
                 )
-            logger.info(f"[generate_node] 使用单轮模式（无记忆系统）")
+            logger.info(f"[generate_node] 使用单轮模式（无记忆系统）, query_type={query_type}")
             if tool_registry:
                 messages = [{"role": "user", "content": prompt}]
                 result = await _chat_with_tools(llm_client, messages, TOOLS_SCHEMA, tool_registry)
@@ -334,6 +448,13 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 result = await llm_client.generate(prompt)
 
         response_text = result["text"]
+
+        # ── 注入 scope 越权兜底提示 ──
+        if denied_scope_hints and not filtered_results:
+            scope_names = "、".join(denied_scope_hints)
+            hint = f"\n\n---\n💡 提示：您询问的内容可能属于「{scope_names}」部门的资料，当前账号暂无该部门查看权限，请联系相关人员获取。"
+            response_text = response_text + hint
+            logger.info(f"[generate_node] 注入 scope 越权提示: {scope_names}")
 
         usage = result.get("usage", {})
         if tracer:
@@ -352,6 +473,7 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "answer": response_text,
             "citations": citations.get("citations", []),
             "context": kb_context,
+            "denied_scope_hints": denied_scope_hints,
         }
 
     except Exception as e:

@@ -46,6 +46,7 @@ def extract_span_outputs(node_name: str, updates: Dict, state: Dict = None) -> D
             "intent": updates.get("intent", ""),
             "keywords": updates.get("keywords", []),
             "expanded_queries": updates.get("expanded_queries", []),
+            "sub_queries": updates.get("sub_queries", []),
         }
     elif node_name == "retrieval":
         results = updates.get("filtered_results", [])

@@ -22,6 +22,29 @@ from ..core.security import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
+class CurrentUser(BaseModel):
+    """请求级用户上下文，由 get_current_user 依赖注入"""
+    username: str
+    role_id: str = "admin"
+    role_name: str = "管理员"
+    scope_ids: list = ["all"]
+
+
+async def get_current_user(username: str = Depends(verify_token)) -> CurrentUser:
+    """从 JWT 解析出的 username 查库得到完整用户上下文（角色 + 可见 scope）。
+    每次请求都从 DB 取最新值，admin 改角色后立即生效。"""
+    from ..services.permission_service import get_user_role
+    role = await get_user_role(username)
+    if role is None:
+        return CurrentUser(username=username)
+    return CurrentUser(
+        username=username,
+        role_id=role["role_id"],
+        role_name=role["role_name"],
+        scope_ids=role["scope_ids"],
+    )
+
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_-]{3,64}$")
 
 
@@ -81,12 +104,21 @@ async def register(request: RegisterRequest):
     try:
         if await _count_users() > 0:
             raise HTTPException(status_code=403, detail="系统已有用户，注册已关闭")
+        # 确保预置角色已存在
+        from ..services.permission_service import ensure_builtin_roles
+        await ensure_builtin_roles()
+
         pool = await get_pool()
         async with pool.acquire() as conn:
             try:
                 await conn.execute(
                     "INSERT INTO users (username, password_hash) VALUES ($1, $2)",
                     request.username, hash_password(request.password),
+                )
+                # 首个用户默认 admin
+                await conn.execute(
+                    "INSERT INTO user_roles (username, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                    request.username, "admin",
                 )
             except asyncpg.UniqueViolationError:
                 raise HTTPException(status_code=409, detail="用户名已存在")
@@ -104,6 +136,18 @@ async def register(request: RegisterRequest):
     )
 
 
-@router.get("/me")
-async def me(username: str = Depends(verify_token)):
-    return {"username": username}
+class MeResponse(BaseModel):
+    username: str
+    role_id: str = "admin"
+    role_name: str = "管理员"
+    scope_ids: list = ["all"]
+
+
+@router.get("/me", response_model=MeResponse)
+async def me(user: CurrentUser = Depends(get_current_user)):
+    return MeResponse(
+        username=user.username,
+        role_id=user.role_id,
+        role_name=user.role_name,
+        scope_ids=user.scope_ids,
+    )

@@ -155,7 +155,7 @@ async def health_check():
     return {"status": "healthy", "service": settings.APP_NAME, "version": "2.0.0"}
 
 
-from .api import auth, chat, documents, health, resilience, errors, tracing, checkpoints, evaluation
+from .api import auth, chat, documents, health, resilience, errors, tracing, checkpoints, evaluation, scopes
 from .core.security import verify_token
 from fastapi import Depends
 
@@ -171,6 +171,7 @@ app.include_router(errors.router, prefix="/api/errors", tags=["错误记录"], d
 app.include_router(tracing.router, prefix="/api/tracing", tags=["链路追踪"], dependencies=_protected)
 app.include_router(checkpoints.router, prefix="/api/checkpoints", tags=["检查点"], dependencies=_protected)
 app.include_router(evaluation.router, prefix="/api/eval", tags=["评测"], dependencies=_protected)
+app.include_router(scopes.router, prefix="/api/scopes", tags=["权限管理"], dependencies=_protected)
 
 
 @app.on_event("startup")
@@ -182,6 +183,9 @@ async def startup_event():
         from app.core.database import get_pool
         await get_pool()
         logger.info("PostgreSQL 评测数据库初始化完成")
+        # 幂等 seeding 预置角色
+        from app.services.permission_service import ensure_builtin_roles
+        await ensure_builtin_roles()
     except Exception as e:
         logger.warning(f"PostgreSQL 初始化失败（评测功能不可用）: {e}")
 

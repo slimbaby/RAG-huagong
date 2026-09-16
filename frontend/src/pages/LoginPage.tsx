@@ -17,7 +17,10 @@ const LoginPage: React.FC = () => {
       const res = mode === 'login'
         ? await login(values.username, values.password)
         : await register(values.username, values.password);
-      setAuth(res.access_token, res.username);
+      // 登录/注册后拉一次 /me 拿角色信息
+      const { getMe } = await import('../api/auth');
+      const me = await getMe();
+      setAuth(res.access_token, res.username, me.role_id, me.role_name, me.scope_ids);
       message.success(mode === 'login' ? '登录成功' : '账户创建成功');
       navigate('/', { replace: true });
     } catch (e: any) {

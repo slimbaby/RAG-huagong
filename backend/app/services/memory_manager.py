@@ -300,7 +300,8 @@ class MemoryManager:
 
     async def build_context(self, session_id: str, user_query: str,
                             kb_context: str = "", intent: str = "kb_query",
-                            retrieval_confident: bool = True) -> tuple:
+                            retrieval_confident: bool = True,
+                            query_type: str = "factual") -> tuple:
         """构建完整的多轮对话 messages 数组，供 LLM.chat() 使用
 
         Returns:
@@ -334,6 +335,14 @@ class MemoryManager:
         # 6. 如果有知识库上下文，附加到 system prompt
         if kb_context and not use_general:
             system_prompt += f"\n\n## 参考资料\n{kb_context}"
+
+        # 6.5 比较类查询：追加比较指令
+        if query_type == "comparison" and not use_general:
+            system_prompt += (
+                "\n\n## 比较回答要求\n"
+                "这是一个比较类问题。请先分别列出每个被比较实体的相关信息，然后进行对比分析，"
+                "最后给出明确的结论。如果缺少某个实体的信息，请明确说明。"
+            )
 
         # 7. 构建 messages 数组
         messages = [{"role": "system", "content": system_prompt}]

@@ -2,7 +2,7 @@
 混合向量存储 - Milvus + BM25混合检索
 """
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 from dataclasses import dataclass
 import logging
 import asyncio
@@ -12,8 +12,10 @@ logger = logging.getLogger(__name__)
 
 def _milvus_escape(value: str) -> str:
     """转义 Milvus 布尔表达式中的字符串字面量，防止文件名/doc_id 中的
-    引号和反斜杠破坏表达式结构（表达式注入）"""
-    return str(value).replace("\\", "\\\\").replace('"', '\\"')
+    引号和反斜杠破坏表达式结构（表达式注入）。
+    返回带双引号的字符串，可直接用于 Milvus 表达式"""
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 @dataclass
@@ -173,13 +175,37 @@ class HybridMilvusStore:
 
         await asyncio.to_thread(_do_bm25)
 
-    async def hybrid_search(self, query: str, query_vector: List[float], top_k: int = 5, vector_weight: float = 0.6, bm25_weight: float = 0.4, fusion_method: str = "rrf") -> List[HybridSearchResult]:
+    async def hybrid_search(
+        self,
+        query: str,
+        query_vector: List[float],
+        top_k: int = 5,
+        vector_weight: float = 0.6,
+        bm25_weight: float = 0.4,
+        fusion_method: str = "rrf",
+        allowed_doc_ids: "Optional[set]" = None,
+    ) -> "List[HybridSearchResult]":
+        """
+        混合检索。allowed_doc_ids=None 表示不过滤（admin）；
+        传空 set 表示没有任何可见文档，直接返回 []。
+        """
         if not self._connected or not self.collection:
             await self.initialize()
-        logger.info(f"[hybrid_search] query='{query}', query_vector={'有' if query_vector else '无'}, connected={self._connected}, collection={'有' if self.collection else '无'}")
+        logger.info(f"[hybrid_search] query='{query}', allowed_doc_ids={'all' if allowed_doc_ids is None else len(allowed_doc_ids)}")
+
+        # scope 过滤：预先查询可见 chunk_ids，供 BM25 post-filter 使用
+        allowed_chunk_ids: "Optional[set]" = None
+        if allowed_doc_ids is not None:
+            if not allowed_doc_ids:
+                return []
+            allowed_chunk_ids = await asyncio.to_thread(self._get_chunk_ids_for_docs, allowed_doc_ids)
+            if not allowed_chunk_ids:
+                logger.info("[hybrid_search] allowed_doc_ids 非空但对应 chunk 为空，返回 0 结果")
+                return []
+
         vector_results, bm25_results = await asyncio.gather(
-            asyncio.to_thread(self._vector_search, query_vector, top_k * 2),
-            asyncio.to_thread(self._bm25_search, query, top_k * 2)
+            asyncio.to_thread(self._vector_search, query_vector, top_k * 2, allowed_doc_ids),
+            asyncio.to_thread(self._bm25_search, query, top_k * 2, allowed_chunk_ids)
         )
         logger.info(f"[hybrid_search] vector_results={len(vector_results)}条, bm25_results={len(bm25_results)}条")
 
@@ -190,7 +216,42 @@ class HybridMilvusStore:
         else:
             return self._max_fusion(vector_results, bm25_results)[:top_k]
 
-    def _vector_search(self, query_vector: List[float], top_k: int) -> List[Dict]:
+    def _get_chunk_ids_for_docs(self, allowed_doc_ids: set) -> set:
+        """查询 Milvus 中指定 doc_id 集合对应的所有 chunk_id（用于 BM25 post-filter）
+        使用分页查询避免超过 Milvus 的 16384 限制
+        """
+        if not allowed_doc_ids or not self._connected or not self.collection:
+            return set()
+        try:
+            escaped = [_milvus_escape(d) for d in allowed_doc_ids]
+            expr = f'doc_id in [{", ".join(escaped)}]'
+            # 分页查询，每页最多 10000 条
+            all_chunk_ids = set()
+            offset = 0
+            page_size = 10000
+            while True:
+                results = self.collection.query(
+                    expr=expr,
+                    output_fields=["chunk_id"],
+                    limit=page_size,
+                    offset=offset,
+                )
+                if not results:
+                    break
+                all_chunk_ids.update(r["chunk_id"] for r in results)
+                if len(results) < page_size:
+                    break  # 最后一页
+                offset += page_size
+                # 防止无限循环（最多查 100 万条）
+                if offset >= 1000000:
+                    logger.warning(f"查询 chunk_ids 超过 100 万条，提前终止")
+                    break
+            return all_chunk_ids
+        except Exception as e:
+            logger.warning(f"查询 scope chunk_ids 失败: {e}")
+            return set()
+
+    def _vector_search(self, query_vector: List[float], top_k: int, allowed_doc_ids: "Optional[set]" = None) -> List[Dict]:
         if not self._connected or not self.collection:
             logger.warning("[_vector_search] 未连接或collection为空")
             return []
@@ -199,10 +260,16 @@ class HybridMilvusStore:
             return []
         try:
             search_params = {"metric_type": self.hnsw_config.metric_type, "params": self.hnsw_config.to_search_params()}
-            logger.info(f"[_vector_search] 开始搜索, top_k={top_k}, vector维度={len(query_vector)}")
+            expr = 'status == "active"'
+            if allowed_doc_ids is not None:
+                if not allowed_doc_ids:
+                    return []
+                escaped = [_milvus_escape(d) for d in allowed_doc_ids]
+                expr += f' AND doc_id in [{", ".join(escaped)}]'
+            logger.info(f"[_vector_search] 开始搜索, top_k={top_k}, vector维度={len(query_vector)}, expr={expr}")
             results = self.collection.search(
                 data=[query_vector], anns_field="vector", param=search_params,
-                limit=top_k, expr='status == "active"',
+                limit=top_k, expr=expr,
                 output_fields=["chunk_id", "content", "source_file", "file_type", "page_number", "content_type", "section_title", "table_nl_description", "doc_id"]
             )
             search_results = []
@@ -218,6 +285,7 @@ class HybridMilvusStore:
                             "content_type": hit.entity.get("content_type"),
                             "section_title": hit.entity.get("section_title"),
                             "table_nl_description": hit.entity.get("table_nl_description"),
+                            "doc_id": hit.entity.get("doc_id"),
                         },
                         "vector_score": hit.score,
                     })
@@ -226,9 +294,13 @@ class HybridMilvusStore:
             logger.error(f"向量检索失败: {e}")
             return []
 
-    def _bm25_search(self, query: str, top_k: int) -> List[Dict]:
+    def _bm25_search(self, query: str, top_k: int, allowed_chunk_ids: "Optional[set]" = None) -> List[Dict]:
         try:
-            results = self.bm25.search(query, top_k)
+            results = self.bm25.search(query, top_k * 2 if allowed_chunk_ids else top_k)
+            if allowed_chunk_ids is not None:
+                # post-filter：只保留 scope 内的 chunk
+                results = [(cid, score) for cid, score in results if cid in allowed_chunk_ids]
+                results = results[:top_k]
             search_results = []
             for doc_id, score in results:
                 stats = self.bm25.doc_stats.get(doc_id, {})

@@ -63,6 +63,18 @@ export interface DocumentInfo {
   upload_time: string;
   status: 'processing' | 'ready' | 'error';
   metadata?: Record<string, any>;
+  scope_ids?: string[];
+}
+
+export interface ScopeInfo {
+  scope_id: string;
+  name: string;
+}
+
+export interface RoleInfo {
+  role_id: string;
+  role_name: string;
+  scope_ids: string[];
 }
 
 export interface UploadProgress {
