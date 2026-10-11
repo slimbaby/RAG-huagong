@@ -10,12 +10,12 @@
 - **前端**: React 18 + TypeScript + Ant Design 5 + Zustand
 - **向量库**: Milvus 2.4 (HNSW, COSINE)
 - **关键词检索**: BM25 (jieba 中文分词)
-- **重排序**: CrossEncoder (bge-reranker-v2-m3)
+- **重排序**: CrossEncoder (bge-reranker-base, 512 token 截断 / batch 16)
 - **Embedding**: BGE-base-zh-v1.5 (768维)
 - **数据库**: PostgreSQL 15 (评测) + Redis 7 (会话)
 - **OCR**: PaddleOCR (主) + Tesseract (备)
 - **文档解析**: PyMuPDF(PDF) + python-docx(Word) + pandas(Excel/CSV)
-- **部署**: Docker Compose (8服务) + K8s 配置
+- **部署**: Docker Compose (9服务) + K8s 配置
 
 ## 已完成的优化
 
@@ -107,12 +107,29 @@
 - `_persist_trace` 提交到单线程池，不再同步阻塞 event loop；executor 关闭时降级为同步写，不丢数据
 - 新增 `backend/tests/test_tracing.py`（5 用例：嵌套结构 / 并发隔离 / 异常标记 / 落盘 / 关闭降级）
 
+### 10. P0 安全/一致性修复 (2026-09-25)
+
+代码级审查（docs/01-技术分析.md §9）发现并修复三项 P0 缺陷，回归测试 `backend/tests/test_p0_fixes.py`（10 用例），全量套件 101 passed：
+
+**① Milvus 删除表达式双重引号（删除静默失败）**:
+- `_milvus_escape` 已返回带引号字面量，但 `delete_by_file`/`delete_by_doc_id`/`query_by_file`（hybrid_store.py）及 memory_manager 的删除又外包一层引号，生成 `doc_id == ""x""` 非法表达式；异常被 except 吞掉，删除静默失败 → 孤儿 chunk 残留、检索重复
+- 修复: 新增 `_build_eq_expr(field, value)` 统一拼接（含回归防护注释），4 处调用点全部改用；delete_by_file/delete_by_doc_id 失败改为向上抛；documents.py 删除 API 失败时中止（500）而非继续删元数据，_process_document 的「删除失败中止重索引」保护随之真正生效
+
+**② 熔断器 can_execute 必然死锁**:
+- 持 `self._lock` 再调 `state` property 二次加同一把不可重入 Lock；resilience 一旦接入主流程即挂死请求线程
+- 修复: 提取锁内 `_resolve_state()`，state property 与 can_execute 共用；同时修复 `_half_open_requests` 只清零从不递增的问题（半开限流形同虚设），can_execute 在 HALF_OPEN 真实占用配额，状态迁移时清零
+
+**③ 幽灵用户名回落 admin（越权通道）**:
+- JWT 验签通过但 users 表查无此人 → permission_service.get_user_role 兜底返回 admin + all scopes（eval_runner 服务 token 借此工作，但任何幽灵用户名同样获得全量权限）
+- 修复: config 新增 `SERVICE_ACCOUNTS` 显式白名单（默认 ["eval_runner"]，授予 service 角色）；get_user_role 区分三种情形——服务账号/已注册未分配角色(向后兼容 admin+warning)/未注册(None)；get_current_user 对 None 抛 403；AUTH_ENABLED=False 保留 anonymous 显式放行；get_visible_scopes 对 None 角色返回 []（无权限）而非 None（admin 特权语义）；CurrentUser/MeResponse 默认值改最小权限
+
 ## 关键文件
 
 | 文件 | 用途 |
 |------|------|
 | `backend/app/tracing/tracer.py` | 自研链路追踪（contextvar + span 嵌套树 + 异步落盘） |
 | `backend/tests/test_tracing.py` | Trace 行为测试（嵌套/并发隔离/异常/落盘） |
+| `backend/tests/test_p0_fixes.py` | P0 修复回归测试（表达式拼接/熔断器死锁/权限回落） |
 | `frontend/src/components/Trace/FlameGraph.tsx` | 火焰图组件（含自身耗时计算） |
 | `backend/app/agents/graph.py` | LangGraph RAG 工作流定义 |
 | `backend/app/agents/nodes.py` | 各节点实现 (查询优化/检索/重排/生成) |
@@ -132,19 +149,19 @@
 ## 待优化项
 
 ### 高优先级
-1. Resilience 层(熔断器/超时/重试, `app/resilience/`)已实现但未接入 RAG 流程，LLM/Milvus 故障会无保护级联
-2. Reranker (bge-reranker-v2-m3, 568M) 跑在 CPU 上，单次精排 17-71s，拖慢线上问答和评测——上 GPU 或换 bge-reranker-base
-3. `image_processor.py:19-24` PaddleOCR 每实例重新初始化 (pdf_parser 已是单例，这里漏了)
-4. 无 CI，且容器 venv 未装 pytest，测试从不自动运行
-5. docker-compose 明文弱密码 (backend 环境块 REDIS_PASSWORD=infiniflow 等)
+1. ~~Resilience 层未接入 RAG 流程~~ ✅ 已完成（`resilience/executor.py` 统一执行器，`llm_service._create_completion` 走 execute_async 重试，`hybrid_store` 的 vector/bm25 搜索走 execute_sync + 熔断器）
+2. ~~Reranker 换 bge-reranker-base~~ ✅ 已完成（现默认 base + 512 截断/batch16）；仍跑在 CPU 上，上 GPU 可继续给评测提速
+3. ~~`image_processor.py` PaddleOCR 每实例重新初始化~~ ✅ 已完成（模块级 `_PADDLE_OCR_INSTANCE` 单例 + `_get_shared_paddle_ocr()`）
+4. ~~无 CI，容器 venv 未装 pytest~~ ✅ 已完成（`.github/workflows/ci.yml`：backend pytest + frontend vitest + compose-config 验证；Dockerfile 多阶段 `dev` target 含 pytest）
+5. ~~docker-compose 明文弱密码~~ ✅ 已完成（所有密码 `:?` 必填插值 + `docker/.env.example` 模板 + backend REDIS_PASSWORD 与 redis 服务同源）
 
 ### 中优先级
-5. 硬编码值散落 (nodes.py:419 top_k=5、451/456 置信度阈值 0.10/0.40)
-6. Prompt 硬编码在 nodes.py:183-215，应外部化管理
-7. graph.py:152,191 用 StateGraph(dict) 而非 RAGState TypedDict，无状态校验
-8. chat.py:305 fire-and-forget 记忆提取任务无异常处理
-9. docker-compose 绑定开发者个人路径 `C:\Users\admin\.cache\huggingface`，不可移植
-10. 前端无测试设施 (无 jest/vitest)
+5. ~~硬编码值散落~~ ✅ 已完成（`config.py` 新增 9 个检索参数：RETRIEVAL_TOP_K/COMPARISON_MAIN_TOP_K/CONFIDENCE_* 等，`nodes.py` 6 处改读 settings）
+6. ~~Prompt 硬编码在 nodes.py~~ ✅ 已完成（`app/prompts/` 包：rag.py/memory.py/query.py，nodes.py + query_rewriter + memory_manager + memory_extractor 全部改用导入）
+7. ~~graph.py 用 StateGraph(dict)~~ ✅ 已完成（`StateGraph(RAGState)` + `StateGraph(AgentState)`，state.py 补齐 `_deps`/`tools_to_call`/`tool_results` 字段）
+8. ~~chat.py fire-and-forget 无异常处理~~ ✅ 已完成（`_spawn_background` 辅助函数：引用集合保活 + done_callback 日志异常）
+9. ~~docker-compose 绑定个人路径~~ ✅ 已完成（`${HF_CACHE_DIR:-hf_cache}` 命名卷默认值 + `docker/.env` 本地覆盖）
+10. ~~前端无测试设施~~ ✅ 已完成（vitest + jsdom + @testing-library，3 个测试文件 10 用例全通过）
 
 ### 低优先级
 11. evaluation.py:263 残留 localhost 硬编码

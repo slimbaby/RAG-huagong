@@ -7,6 +7,27 @@ from .base_tool import DocumentChunk
 import os
 import tempfile
 
+# PaddleOCR 进程级单例：模型加载极重（数百 MB、秒级），
+# 严禁每个 ImageProcessor 实例重新初始化（与 pdf_parser 同模式）
+_PADDLE_OCR_INSTANCE = None
+_PADDLE_OCR_UNAVAILABLE = False
+
+
+def _get_shared_paddle_ocr():
+    """返回进程内共享的 PaddleOCR 实例；不可用时返回 None（只尝试一次导入）"""
+    global _PADDLE_OCR_INSTANCE, _PADDLE_OCR_UNAVAILABLE
+    if _PADDLE_OCR_INSTANCE is not None:
+        return _PADDLE_OCR_INSTANCE
+    if _PADDLE_OCR_UNAVAILABLE:
+        return None
+    try:
+        from paddleocr import PaddleOCR
+        _PADDLE_OCR_INSTANCE = PaddleOCR(use_angle_cls=True, lang="ch")
+    except ImportError:
+        _PADDLE_OCR_UNAVAILABLE = True
+        return None
+    return _PADDLE_OCR_INSTANCE
+
 
 class ImageProcessor:
     """图片处理器 - 多模态LLM + OCR双模式"""
@@ -19,11 +40,8 @@ class ImageProcessor:
     def _get_ocr(self):
         if self._ocr is None:
             if self.ocr_engine == "paddleocr":
-                try:
-                    from paddleocr import PaddleOCR
-                    self._ocr = PaddleOCR(use_angle_cls=True, lang="ch")
-                except ImportError:
-                    self._ocr = "paddleocr_unavailable"
+                shared = _get_shared_paddle_ocr()
+                self._ocr = shared if shared is not None else "paddleocr_unavailable"
             elif self.ocr_engine == "tesseract":
                 try:
                     import pytesseract

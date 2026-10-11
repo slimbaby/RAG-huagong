@@ -24,20 +24,37 @@ router = APIRouter()
 
 
 class CurrentUser(BaseModel):
-    """请求级用户上下文，由 get_current_user 依赖注入"""
+    """请求级用户上下文，由 get_current_user 依赖注入。
+
+    默认值为最小权限——角色/scope 必须显式赋值，
+    防止任何路径意外回落到 admin（此前的越权缺陷根因之一）。
+    """
     username: str
-    role_id: str = "admin"
-    role_name: str = "管理员"
-    scope_ids: list = ["all"]
+    role_id: str = "unknown"
+    role_name: str = "未授权"
+    scope_ids: list = []
 
 
 async def get_current_user(username: str = Depends(verify_token)) -> CurrentUser:
     """从 JWT 解析出的 username 查库得到完整用户上下文（角色 + 可见 scope）。
-    每次请求都从 DB 取最新值，admin 改角色后立即生效。"""
+    每次请求都从 DB 取最新值，admin 改角色后立即生效。
+
+    安全语义：
+    - AUTH_ENABLED=False：显式放行（部署方主动关闭认证，保持匿名管理员上下文）；
+    - 服务账号（settings.SERVICE_ACCOUNTS，如 eval_runner）：由
+      get_user_role 显式授予 service 角色；
+    - users 表查无此人的幽灵 token：403 拒绝——不再回落 admin。
+    """
+    from ..core.config import settings
+    if not settings.AUTH_ENABLED:
+        return CurrentUser(
+            username=username, role_id="admin", role_name="管理员", scope_ids=["all"]
+        )
     from ..services.permission_service import get_user_role
     role = await get_user_role(username)
     if role is None:
-        return CurrentUser(username=username)
+        logger.warning(f"拒绝访问：token 用户名 {username} 不存在于用户库")
+        raise HTTPException(status_code=403, detail="用户不存在或已被禁用")
     return CurrentUser(
         username=username,
         role_id=role["role_id"],
@@ -138,9 +155,9 @@ async def register(request: RegisterRequest):
 
 class MeResponse(BaseModel):
     username: str
-    role_id: str = "admin"
-    role_name: str = "管理员"
-    scope_ids: list = ["all"]
+    role_id: str = "unknown"
+    role_name: str = "未授权"
+    scope_ids: list = []
 
 
 @router.get("/me", response_model=MeResponse)

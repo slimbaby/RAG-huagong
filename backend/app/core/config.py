@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = ""  # 为空时启动自动生成随机密钥（重启后旧 token 全部失效）
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440  # token 有效期（分钟），默认 24 小时
+    # 服务账号白名单：允许不入库、由服务自签 token 调用内部 API 的用户名
+    # （如评测 runner 的 eval_runner）。显式枚举，替代此前
+    # 「任意验签通过但未入库的用户名回落 admin」的越权通道
+    SERVICE_ACCOUNTS: List[str] = ["eval_runner"]
 
     # RAGAS评测配置
     RAGAS_ENABLED: bool = True
@@ -97,6 +101,17 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 100
     CHUNK_MIN_SIZE: int = 100
     TOP_K_RESULTS: int = 5
+
+    # 检索链路参数（原散落在 nodes.py 的硬编码值，集中管理）
+    RETRIEVAL_TOP_K: int = 10                 # 单查询混合检索每路条数（CPU环境减半降低rerank耗时）
+    COMPARISON_MAIN_TOP_K: int = 8            # 比较类查询分解时主查询条数
+    COMPARISON_SUB_TOP_K: int = 5             # 比较类每个子查询条数
+    EXPAND_TRIGGER_MIN_RESULTS: int = 3       # 结果少于此数才触发扩展查询补查
+    EXPAND_MAX_VARIANTS: int = 2              # 补查最多使用的扩展变体数
+    QUERY_EXPAND_TOP_K: int = 5               # 每个扩展变体的补查条数
+    SCOPE_PROBE_TOP_K: int = 3                # RBAC 越权 scope 探测条数
+    CONFIDENCE_RERANKER_THRESHOLD: float = 0.10  # reranker 分置信阈值（表格/短文本 cross-encoder 天然低分，不宜过高）
+    CONFIDENCE_VECTOR_THRESHOLD: float = 0.40    # reranker 不可用时向量分回退阈值
 
     # 表格切分配置
     TABLE_SEMANTIC_GROUPING: bool = True

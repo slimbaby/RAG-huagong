@@ -78,3 +78,8 @@ packages = ["app"]
 
 [tool.uv]
 index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+
+[tool.pytest.ini_options]
+markers = [
+    "model: 需要下载/加载真实模型权重（CI 环境自动跳过）",
+]

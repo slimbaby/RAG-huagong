@@ -185,6 +185,76 @@ TOOL_REGISTRY = {
 
 TOOLS_SYSTEM_HINT = (
     "你可以调用以下工具辅助回答：query_employee_info(查员工表)、calculate(四则运算)、"
-    "get_current_date(当前日期)。当问题涉及具体员工的年龄、城市等属性，或需要数值比较/年份推算时，"
-    "必须先调用工具获取准确数据，再基于工具结果回答；禁止凭记忆猜测表格内容。"
+    "get_current_date(当前日期)、query_order(查订单)、query_inventory(查库存)、"
+    "query_quality(查质检)。当问题涉及具体员工的年龄、城市等属性，或需要数值比较/年份推算时，"
+    "或涉及订单状态、物料库存、质检记录时，必须先调用工具获取准确数据，再基于工具结果回答；"
+    "禁止凭记忆猜测表格内容。"
 )
+
+
+# ── 制造业工具注册 ──
+
+try:
+    from .manufacturing_tools import tool_query_order, tool_query_inventory, tool_query_quality
+    _HAS_MANUFACTURING = True
+except ImportError:
+    _HAS_MANUFACTURING = False
+
+if _HAS_MANUFACTURING:
+    TOOLS_SCHEMA.extend([
+        {
+            "type": "function",
+            "function": {
+                "name": "query_order",
+                "description": "查询订单信息（订单号、客户、产品、数量、状态、交期等）。当用户询问订单状态、订单详情、交期、某客户的订单时必须使用此工具。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "order_id": {"type": "string", "description": "订单号，如 WO2025001；留空则按其他条件筛选"},
+                        "status": {"type": "string", "description": "订单状态筛选：待采购/生产中/已发货/已完成/已取消"},
+                        "customer": {"type": "string", "description": "客户名称（模糊匹配）"},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "query_inventory",
+                "description": "查询物料库存信息（物料编码、名称、库存量、仓库、安全库存等）。当用户询问库存、物料数量、仓库情况时必须使用此工具。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "material_code": {"type": "string", "description": "物料编码，如 M001；留空则按其他条件筛选"},
+                        "warehouse": {"type": "string", "description": "仓库名称（模糊匹配）"},
+                        "material_name": {"type": "string", "description": "物料名称（模糊匹配）"},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "query_quality",
+                "description": "查询质检记录（批次号、物料、检验项、检验结果、检验员、日期等）。当用户询问质检结果、合格率、不合格批次时必须使用此工具。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "batch_no": {"type": "string", "description": "批次号，如 B20250001；留空则按其他条件筛选"},
+                        "result_filter": {"type": "string", "description": "检验结果筛选：合格 或 不合格"},
+                        "material_name": {"type": "string", "description": "物料名称（模糊匹配）"},
+                        "days": {"type": "integer", "description": "查询最近N天的记录，0表示不限"},
+                    },
+                    "required": [],
+                },
+            },
+        },
+    ])
+
+    TOOL_REGISTRY.update({
+        "query_order": tool_query_order,
+        "query_inventory": tool_query_inventory,
+        "query_quality": tool_query_quality,
+    })

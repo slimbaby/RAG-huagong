@@ -244,9 +244,13 @@ langgraph-rag/
 git clone <repo-url>
 cd langgraph-rag
 
-# 配置环境变量
+# 配置环境变量（后端应用配置：LLM API Key 等）
 cp .env.example .env
 # 编辑 .env 填入 LLM API Key 等配置
+
+# 配置 compose 插值变量（数据库密码等 secrets，均为必填）
+cp docker/.env.example docker/.env
+# 编辑 docker/.env 填入强密码（注意：compose 只读 docker/.env，根目录 .env 对插值无效）
 
 # 启动所有服务
 cd docker

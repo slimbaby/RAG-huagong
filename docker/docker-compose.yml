@@ -29,9 +29,9 @@ services:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-infiniflow}
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD 必填，请在 docker/.env 设置（参考 docker/.env.example）}
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:-infiniflow} ping | grep PONG"]
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -46,7 +46,7 @@ services:
       - "127.0.0.1:5434:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-your_password_here}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填，请在 docker/.env 设置（参考 docker/.env.example）}
       - POSTGRES_DB=langgraph_checkpoints
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -65,15 +65,15 @@ services:
     ports:
       - "127.0.0.1:3306:3306"
     environment:
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-infiniflow}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD 必填，请在 docker/.env 设置（参考 docker/.env.example）}
       - MYSQL_DATABASE=rag_flow
       - MYSQL_USER=rag_flow
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-infiniflow}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:?MYSQL_PASSWORD 必填，请在 docker/.env 设置（参考 docker/.env.example）}
     volumes:
       - mysql_data:/var/lib/mysql
     command: --default-authentication-plugin=caching_sha2_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pinfiniflow"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -107,8 +107,8 @@ services:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
     environment:
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:?MINIO_ROOT_USER 必填，请在 docker/.env 设置（参考 docker/.env.example）}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 必填，请在 docker/.env 设置（参考 docker/.env.example）}
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
@@ -130,20 +130,20 @@ services:
     volumes:
       - ragflow_data:/ragflow/data
     environment:
-      - RAGFLOW_SECRET_KEY=${RAGFLOW_SECRET_KEY:-langgraph-rag-secret-key}
+      - RAGFLOW_SECRET_KEY=${RAGFLOW_SECRET_KEY:?RAGFLOW_SECRET_KEY 必填，请在 docker/.env 设置（参考 docker/.env.example）}
       - API_PROXY_SCHEME=python
       - MYSQL_HOST=mysql
       - MYSQL_PORT=3306
       - MYSQL_USER=rag_flow
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-infiniflow}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_DB=rag_flow
       - ES_HOSTS=http://es01:9200
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-infiniflow}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
     depends_on:
       mysql:
         condition: service_healthy
@@ -166,6 +166,7 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
+      target: dev   # 开发部署带 pytest（生产镜像用默认 runtime target）
     container_name: langgraph_rag_backend
     ports:
       - "127.0.0.1:8000:8000"
@@ -179,13 +180,16 @@ services:
       - ../logs:/app/logs
       - ../checkpoints:/app/checkpoints
       - ../bm25_index:/app/bm25_index
-      - C:\Users\admin\.cache\huggingface:/root/.cache/huggingface
+      # HuggingFace 模型缓存：默认用命名卷（可移植）；
+      # 想复用宿主机已有缓存时在 docker/.env 设 HF_CACHE_DIR=<宿主机路径>
+      - ${HF_CACHE_DIR:-hf_cache}:/root/.cache/huggingface
     env_file:
       - ../.env
     environment:
       - MILVUS_HOST=milvus
       - REDIS_HOST=redis
-      - REDIS_PASSWORD=infiniflow
+      # 与 redis 服务同源插值——此前硬编码 infiniflow，轮换密码时会失联
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=chemical_rag
@@ -234,3 +238,4 @@ volumes:
   es_data:
   mysql_data:
   minio_data:
+  hf_cache:

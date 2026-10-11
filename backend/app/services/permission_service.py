@@ -53,8 +53,23 @@ async def ensure_builtin_roles():
             )
 
 
+SERVICE_ROLE = {"role_id": "service", "role_name": "服务账号", "scope_ids": ["all"]}
+
+
 async def get_user_role(username: str) -> Optional[dict]:
-    """返回用户的主角色 {role_id, role_name, scope_ids}，未分配返回 None"""
+    """返回用户的主角色 {role_id, role_name, scope_ids}。
+
+    三种情形：
+    - 服务账号（settings.SERVICE_ACCOUNTS 显式白名单，如评测 runner 的
+      eval_runner）：不入库，直接授予 service 角色；
+    - users 表中存在但未分配角色：向后兼容按 admin 处理（记 warning）；
+    - users 表中不存在的用户名：返回 None，调用方应拒绝访问。
+      此前该情形回落 admin——任何持有效签名 token 的幽灵用户名
+      都能获得全量权限，属越权通道。
+    """
+    from ..core.config import settings
+    if username in (settings.SERVICE_ACCOUNTS or []):
+        return dict(SERVICE_ROLE)
     from ..core.database import get_pool
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -84,15 +99,26 @@ async def get_user_role(username: str) -> Optional[dict]:
                 "role_name": row["role_name"],
                 "scope_ids": scope_ids,
             }
-    # 向后兼容：老用户没有 user_roles 记录时，按 admin 处理
-    return {"role_id": "admin", "role_name": "管理员", "scope_ids": ["all"]}
+        # 无角色记录：仅对 users 表中真实存在的老用户向后兼容为 admin
+        exists = await conn.fetchval(
+            "SELECT 1 FROM users WHERE username = $1", username
+        )
+    if exists:
+        logger.warning(f"用户 {username} 存在但未分配角色，向后兼容按 admin 处理")
+        return {"role_id": "admin", "role_name": "管理员", "scope_ids": ["all"]}
+    return None
 
 
 async def get_visible_scopes(username: str) -> Optional[List[str]]:
-    """返回用户可见的 scope 列表。None 表示 admin 看全部，无需过滤。"""
+    """返回用户可见的 scope 列表。None 表示 admin 看全部，无需过滤。
+
+    注意语义：get_user_role 返回 None（users 表查无此人）时返回空列表
+    （无任何可见 scope），而不是 None——None 是 admin 特权语义，
+    不能授予身份未知的请求者。
+    """
     role = await get_user_role(username)
     if role is None:
-        return None
+        return []
     scope_ids = role["scope_ids"]
     if "all" in scope_ids:
         return None

@@ -10,6 +10,13 @@ import logging
 import re
 import uuid
 
+from ..core.config import settings
+from ..prompts.rag import (
+    BUSINESS_PROMPT,
+    COMPARISON_PROMPT,
+    GENERAL_PROMPT,
+    RAG_PROMPT_WITH_CITATION_AND_TIME,
+)
 from ..tracing.tracer import SpanType
 
 logger = logging.getLogger(__name__)
@@ -159,9 +166,9 @@ async def retrieval_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 )
 
             # 并行任务：主查询（用已有向量）+ 各子查询（需独立 embedding）
-            tasks = [_search_with_embed(optimized_query, 10, existing_vector=query_vector)]
+            tasks = [_search_with_embed(optimized_query, settings.COMPARISON_MAIN_TOP_K, existing_vector=query_vector)]
             for sq in sub_queries:
-                tasks.append(_search_with_embed(sq, 8))
+                tasks.append(_search_with_embed(sq, settings.COMPARISON_SUB_TOP_K))
 
             with _tracer_span(tracer, SpanType.RETRIEVAL, "parallel_comparison_search", {"sub_queries": sub_queries}):
                 search_results = await asyncio.gather(*tasks)
@@ -173,11 +180,11 @@ async def retrieval_node(state: Dict[str, Any]) -> Dict[str, Any]:
             logger.info(f"[retrieval_node] parallel comparison search: {len(results)} total results from {len(tasks)} searches")
         else:
             # 原有路径：单查询检索
-            with _tracer_span(tracer, SpanType.RETRIEVAL, "hybrid_search", {"query": optimized_query, "top_k": 20}) as sp:
+            with _tracer_span(tracer, SpanType.RETRIEVAL, "hybrid_search", {"query": optimized_query, "top_k": settings.RETRIEVAL_TOP_K}) as sp:
                 results = await hybrid_store.hybrid_search(
                     query=optimized_query,
                     query_vector=query_vector,
-                    top_k=20,
+                    top_k=settings.RETRIEVAL_TOP_K,
                     allowed_doc_ids=allowed_doc_ids,
                 )
                 if sp is not None:
@@ -185,12 +192,12 @@ async def retrieval_node(state: Dict[str, Any]) -> Dict[str, Any]:
             logger.info(f"[retrieval_node] hybrid_search返回 {len(results)} 条结果")
 
             # If not enough results, try expanded queries
-            if len(results) < 3 and expanded_queries and embedding_service:
-                for eq in expanded_queries[:2]:
+            if len(results) < settings.EXPAND_TRIGGER_MIN_RESULTS and expanded_queries and embedding_service:
+                for eq in expanded_queries[:settings.EXPAND_MAX_VARIANTS]:
                     with _tracer_span(tracer, SpanType.RETRIEVAL, "expanded_search", {"query": eq}):
                         eq_vector = await embedding_service.embed_query(eq)
                         eq_results = await hybrid_store.hybrid_search(
-                            query=eq, query_vector=eq_vector, top_k=5,
+                            query=eq, query_vector=eq_vector, top_k=settings.QUERY_EXPAND_TOP_K,
                             allowed_doc_ids=allowed_doc_ids,
                         )
                     results.extend(eq_results)
@@ -240,59 +247,8 @@ async def retrieval_node(state: Dict[str, Any]) -> Dict[str, Any]:
         return {"raw_results": [], "filtered_results": [], "error": f"检索失败: {str(e)}"}
 
 
-RAG_PROMPT_WITH_CITATION_AND_TIME = """你是化工园区知识库助手。基于以下参考资料回答问题。
-
-## 回答要求
-1. 基于参考资料回答，不要编造信息
-2. 在回答中必须标注引用来源，格式为 [来源X]
-3. 引用格式：[来源N: 文件名, 第M页]
-4. **对于法律法规类引用，必须注明发布/生效日期和知识库更新时间**
-5. 如果引用的法规有多个版本，说明使用的是最新版本
-6. 如果参考资料中没有相关信息，明确说明"知识库中未找到相关信息"
-
-## 参考资料
-{context}
-
-## 问题
-{question}
-
-## 回答
-"""
-
-GENERAL_PROMPT = """你是化工园区知识库助手。用户的问题不涉及知识库文档内容，请用你的通用知识回答。
-
-## 回答要求
-1. 准确、简洁地回答问题
-2. 如果不确定，请如实说明
-3. **绝对禁止编造数据**：不要编造年龄、日期、数字等具体数据，如果不知道就明确说"无法确定"
-4. **禁止伪造来源**：不要说"根据XX文档/表格"如果该数据实际上不在文档中
-5. 在回答末尾注明：「以上内容来自通用知识，非知识库文档」
-
-## 问题
-{question}
-
-## 回答
-"""
-
-COMPARISON_PROMPT = """你是化工园区知识库助手。基于以下参考资料回答用户的比较类问题。
-
-## 回答要求
-1. 基于参考资料回答，不要编造信息
-2. 在回答中必须标注引用来源，格式为 [来源X]
-3. 引用格式：[来源N: 文件名, 第M页]
-4. 请先分别列出每个被比较实体的相关信息，然后进行对比分析
-5. 最后给出明确的结论，直接回答用户的比较问题
-6. 如果参考资料中缺少某个实体的信息，明确说明"知识库中未找到XX的相关信息"
-7. **对于法律法规类引用，必须注明发布/生效日期和知识库更新时间**
-
-## 参考资料
-{context}
-
-## 问题
-{question}
-
-## 回答
-"""
+# 三套生成模板（RAG_PROMPT_WITH_CITATION_AND_TIME / GENERAL_PROMPT /
+# COMPARISON_PROMPT）已外部化到 app/prompts/rag.py，顶部统一 import
 
 
 async def _probe_denied_scopes(state: Dict[str, Any], query: str) -> List[str]:
@@ -307,7 +263,7 @@ async def _probe_denied_scopes(state: Dict[str, Any], query: str) -> List[str]:
     try:
         qv = await embedding_service.embed_query(query)
         # 不带 scope 过滤做一次轻量检索
-        probe = await hybrid_store.hybrid_search(query=query, query_vector=qv, top_k=3, allowed_doc_ids=None)
+        probe = await hybrid_store.hybrid_search(query=query, query_vector=qv, top_k=settings.SCOPE_PROBE_TOP_K, allowed_doc_ids=None)
         if not probe:
             return []
         # 收集命中结果的 doc_id → 查 scope
@@ -395,7 +351,7 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     try:
-        use_general = (intent == "general") or (not retrieval_confident and not tool_registry)
+        use_general = (intent in ("general", "business_query")) or (not retrieval_confident and not tool_registry)
 
         if use_general:
             kb_context = ""
@@ -432,7 +388,9 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 result = await llm_client.chat(messages)
         else:
-            if use_general:
+            if intent == "business_query":
+                prompt = BUSINESS_PROMPT.format(question=optimized_query)
+            elif use_general:
                 prompt = GENERAL_PROMPT.format(question=optimized_query)
             elif query_type == "comparison":
                 prompt = COMPARISON_PROMPT.format(context=kb_context, question=optimized_query)
@@ -531,6 +489,8 @@ def route_after_optimize(state: Dict[str, Any]) -> str:
     intent = state.get("intent", "kb_query")
     if intent == "general":
         return "general"
+    if intent == "business_query":
+        return "business"
     return "kb_query"
 
 
@@ -564,7 +524,7 @@ async def reranker_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # 按 reranker_score 降序排列
         filtered_results.sort(key=lambda x: x.get("reranker_score", 0), reverse=True)
 
-        top_k = 5
+        top_k = settings.RERANKER_TOP_K
         filtered_results = filtered_results[:top_k]
 
         logger.info(f"[reranker_node] 精排完成，top分数: {[round(r.get('reranker_score', 0), 4) for r in filtered_results[:3]]}")
@@ -596,12 +556,12 @@ async def check_retrieval_confidence_node(state: Dict[str, Any]) -> Dict[str, An
     if top_reranker_score > 0:
         # reranker 可用：用 reranker 分数判断
         # cross-encoder 分数范围 0-1，表格行/短文本天然得分偏低，阈值不宜过高
-        confidence_threshold = 0.10
+        confidence_threshold = settings.CONFIDENCE_RERANKER_THRESHOLD
         top_score = top_reranker_score
         score_name = "reranker_score"
     else:
         # reranker 不可用：回退到向量分数
-        confidence_threshold = 0.40
+        confidence_threshold = settings.CONFIDENCE_VECTOR_THRESHOLD
         top_score = top_vector_score
         score_name = "vector_score"
 
@@ -640,15 +600,19 @@ async def evidence_judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
     filtered = state.get("filtered_results", [])
     iteration = state.get("iteration_count", 0)
 
-    # 通用模式 / 低置信度（已降级通用）/ 已有检索结果 → 不需要补检索
-    if intent == "general" or not state.get("retrieval_confident", True):
+    # 通用模式 → 不需要补检索
+    if intent == "general":
         return {"need_more_evidence": False}
+    # 已有检索结果（含低分被救回/低分降级通用）→ 补检索无意义，放行
     if filtered:
         return {"need_more_evidence": False}
     # 已经补检索过一轮仍为空 → 放行，让 generate 兜底
     if iteration > 0:
         logger.info(f"[evidence_judge] 补检索第{iteration}轮仍为空，进入生成")
         return {"need_more_evidence": False}
+    # 注意：此处不能按 retrieval_confident 放行——check_confidence 对空结果
+    # 必标 False，若据此放行则本补检索回边永不可达（修复前的死逻辑，
+    # 2026-09-25 由 test_graph_runtime 冒烟测试发现）。补检索只针对「结果为空」。
 
     # 检索结果为空且是第一轮 → 用改写后的查询再试一次
     optimized_query = state.get("optimized_query") or state.get("user_query", "")

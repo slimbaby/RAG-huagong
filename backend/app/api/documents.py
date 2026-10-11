@@ -657,7 +657,10 @@ async def delete_document(doc_id: str, user: CurrentUser = Depends(get_current_u
         store = get_shared_store()
         await store.delete_by_doc_id(doc_id)
     except Exception as e:
-        logger.warning(f"删除Milvus数据失败: {e}")
+        # 向量清理失败必须中止：继续删元数据/文件会产生「界面已删除、
+        # 检索仍命中」的幽灵文档，且元数据丢失后无法重试
+        logger.error(f"删除Milvus数据失败 (doc_id={doc_id})，中止删除: {e}")
+        raise HTTPException(status_code=500, detail="向量索引清理失败，文档未删除，请重试")
     file_path = doc.get("file_path")
     if file_path and os.path.exists(file_path):
         try:

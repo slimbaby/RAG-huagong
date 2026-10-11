@@ -7,22 +7,11 @@ from operator import add
 import operator
 
 
-class AgentState(TypedDict):
-    """通用Agent状态 - 用于未来多Agent协作"""
-    messages: Annotated[List[Dict], add]
-    current_agent: str
-    task_type: str
-    session_id: Optional[str]
-    trace_id: Optional[str]
-    task_id: Optional[str]
-    tools_to_call: List[Dict]
-    tool_results: List[Dict]
-    final_answer: Optional[str]
-    metadata: Dict[str, Any]
-
-
 class RAGState(TypedDict):
-    """RAG查询状态 - 用于RAG流程编排"""
+    """RAG查询状态 - 用于RAG流程编排（graph.py 以 StateGraph(RAGState) 绑定，
+    节点返回 schema 之外的键会被 LangGraph 拒绝/丢弃，新增状态字段必须先在此声明）"""
+    # ── 运行时依赖注入（graph._make_wrapper 写入；非业务数据，不落 trace）──
+    _deps: Optional[Dict[str, Any]]
     user_query: str
     session_id: Optional[str]
     task_id: Optional[str]
@@ -62,3 +51,19 @@ class RAGState(TypedDict):
     error: Optional[str]
     # Metadata
     metadata: Dict[str, Any]
+    # ── 工具调用（generate 节点工具循环 / tool_call 节点使用）──
+    tools_to_call: List[Dict]
+    tool_results: List[Dict]
+
+
+class AgentState(RAGState):
+    """通用Agent状态 - 用于未来多Agent协作。
+
+    继承 RAGState：agent 图与 RAG 图共用同一批节点（query_optimize/retrieval/
+    generate...），节点写入的全部是 RAG 键，schema 必须是 RAGState 的超集，
+    否则绑定 TypedDict 后节点更新会被 LangGraph 拒绝。
+    """
+    messages: Annotated[List[Dict], add]
+    current_agent: str
+    task_type: str
+    final_answer: Optional[str]

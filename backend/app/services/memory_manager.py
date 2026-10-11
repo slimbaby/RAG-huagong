@@ -13,6 +13,12 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional
 
+from ..prompts.memory import (
+    SYSTEM_PROMPT_WITH_MEMORY as _SYS_PROMPT_KB,
+    SYSTEM_PROMPT_WITH_MEMORY_GENERAL as _SYS_PROMPT_GENERAL,
+    SYSTEM_PROMPT_WITH_MEMORY_BUSINESS as _SYS_PROMPT_BUSINESS,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,38 +40,11 @@ class Memory:
 class MemoryManager:
     """三层记忆管理器"""
 
-    SYSTEM_PROMPT_WITH_MEMORY = """你是化工园区知识库助手。以下是对话相关的记忆和上下文信息，请在回答时参考。
-
-## 长期记忆
-{long_term_memories}
-
-## 对话历史
-{chat_history}
-
-## 回答要求
-1. 基于参考资料回答，不要编造信息
-2. 在回答中必须标注引用来源，格式为 [来源X]
-3. 引用格式：[来源N: 文件名, 第M页]
-4. 对于法律法规类引用，必须注明发布/生效日期和知识库更新时间
-5. 如果引用的法规有多个版本，说明使用的是最新版本
-6. 如果参考资料中没有相关信息，明确说明"知识库中未找到相关信息"
-7. 参考对话历史中的上下文，理解用户指代（如"上面提到的"、"那个法规"等）"""
-
-    SYSTEM_PROMPT_WITH_MEMORY_GENERAL = """你是化工园区知识库助手。用户的问题不涉及知识库文档内容，请用你的通用知识回答。
-
-## 长期记忆
-{long_term_memories}
-
-## 对话历史
-{chat_history}
-
-## 回答要求
-1. 准确、简洁地回答问题
-2. 如果不确定，请如实说明
-3. **绝对禁止编造数据**：不要编造年龄、日期、数字等具体数据，如果不知道就明确说"无法确定"
-4. **禁止伪造来源**：不要说"根据XX文档/表格"如果该数据实际上不在文档中
-5. 参考对话历史中的上下文，理解用户指代
-6. 在回答末尾注明：「以上内容来自通用知识，非知识库文档」"""
+    # system prompt 模板已外部化到 app/prompts/memory.py（集中管理）；
+    # 保留类属性引用以兼容既有访问路径 MemoryManager.SYSTEM_PROMPT_WITH_MEMORY
+    SYSTEM_PROMPT_WITH_MEMORY = _SYS_PROMPT_KB
+    SYSTEM_PROMPT_WITH_MEMORY_GENERAL = _SYS_PROMPT_GENERAL
+    SYSTEM_PROMPT_WITH_MEMORY_BUSINESS = _SYS_PROMPT_BUSINESS
 
     def __init__(self, session_store, memory_extractor, embedding_service,
                  llm_client, milvus_store=None, config=None):
@@ -321,7 +300,12 @@ class MemoryManager:
 
         # 5. 构建 system prompt
         use_general = (intent == "general") or (not retrieval_confident)
-        if use_general:
+        if intent == "business_query":
+            system_prompt = self.SYSTEM_PROMPT_WITH_MEMORY_BUSINESS.format(
+                long_term_memories=memory_text,
+                chat_history=history_text,
+            )
+        elif use_general:
             system_prompt = self.SYSTEM_PROMPT_WITH_MEMORY_GENERAL.format(
                 long_term_memories=memory_text,
                 chat_history=history_text,
@@ -333,11 +317,11 @@ class MemoryManager:
             )
 
         # 6. 如果有知识库上下文，附加到 system prompt
-        if kb_context and not use_general:
+        if kb_context and not use_general and intent != "business_query":
             system_prompt += f"\n\n## 参考资料\n{kb_context}"
 
         # 6.5 比较类查询：追加比较指令
-        if query_type == "comparison" and not use_general:
+        if query_type == "comparison" and not use_general and intent != "business_query":
             system_prompt += (
                 "\n\n## 比较回答要求\n"
                 "这是一个比较类问题。请先分别列出每个被比较实体的相关信息，然后进行对比分析，"
@@ -347,8 +331,8 @@ class MemoryManager:
         # 7. 构建 messages 数组
         messages = [{"role": "system", "content": system_prompt}]
 
-        # 加入最近的对话历史作为 messages（最近 6 轮，避免 token 过长）
-        recent_history = chat_history[-12:] if len(chat_history) > 12 else chat_history
+        # 加入最近的对话历史作为 messages（最近 3 轮，控制 prompt token 量）
+        recent_history = chat_history[-6:] if len(chat_history) > 6 else chat_history
         for msg in recent_history:
             messages.append({
                 "role": msg["role"],
@@ -466,8 +450,10 @@ class MemoryManager:
             if not utility.has_collection(self.collection_name):
                 return
             col = Collection(self.collection_name)
-            from app.vectorstore.hybrid_store import _milvus_escape
-            col.delete(f'memory_id == "{_milvus_escape(vector_id)}"')
+            from app.vectorstore.hybrid_store import _build_eq_expr
+            # _milvus_escape 已返回带引号字面量，必须用 _build_eq_expr 统一拼接，
+            # 再外包引号会生成 memory_id == ""x"" 非法表达式导致删除静默失败
+            col.delete(_build_eq_expr("memory_id", vector_id))
             col.flush()
             if self._memory_collection is not None:
                 self._memory_collection = None

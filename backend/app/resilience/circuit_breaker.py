@@ -49,25 +49,36 @@ class CircuitBreaker:
         self._lock = threading.Lock()
         self._half_open_requests = 0
 
+    def _resolve_state(self) -> CircuitState:
+        """锁内解析当前状态：OPEN 且恢复超时已到则惰性转 HALF_OPEN。
+        调用方必须已持有 self._lock —— state property 与 can_execute 共用
+        本方法，避免对不可重入的 threading.Lock 二次加锁导致死锁。"""
+        if self._state == CircuitState.OPEN and self._stats.last_failure_time:
+            if time.time() - self._stats.last_failure_time >= self.recovery_timeout:
+                self._state = CircuitState.HALF_OPEN
+                self._half_open_requests = 0
+                self._stats.state_history.append({"state": "half_open", "time": time.time()})
+        return self._state
+
     @property
     def state(self) -> CircuitState:
         with self._lock:
-            if self._state == CircuitState.OPEN and self._stats.last_failure_time:
-                if time.time() - self._stats.last_failure_time >= self.recovery_timeout:
-                    self._state = CircuitState.HALF_OPEN
-                    self._half_open_requests = 0
-                    self._stats.state_history.append({"state": "half_open", "time": time.time()})
-            return self._state
+            return self._resolve_state()
 
     def can_execute(self) -> bool:
         with self._lock:
-            current_state = self.state
+            current_state = self._resolve_state()
             if current_state == CircuitState.CLOSED:
                 return True
             elif current_state == CircuitState.OPEN:
                 return False
             else:
-                return self._half_open_requests < self.half_open_max_requests
+                # HALF_OPEN: 放行有限探测请求，并真实占用配额
+                # （修复：此前 _half_open_requests 只清零从不递增，限流形同虚设）
+                if self._half_open_requests < self.half_open_max_requests:
+                    self._half_open_requests += 1
+                    return True
+                return False
 
     def record_success(self):
         with self._lock:
@@ -77,6 +88,7 @@ class CircuitBreaker:
             self._stats.last_success_time = time.time()
             if self._state == CircuitState.HALF_OPEN:
                 self._state = CircuitState.CLOSED
+                self._half_open_requests = 0
                 self._stats.state_history.append({"state": "closed", "time": time.time()})
 
     def record_failure(self):
@@ -90,6 +102,7 @@ class CircuitBreaker:
                 self._stats.state_history.append({"state": "open", "time": time.time()})
             elif self._state == CircuitState.HALF_OPEN:
                 self._state = CircuitState.OPEN
+                self._half_open_requests = 0
                 self._stats.state_history.append({"state": "open", "time": time.time()})
 
     def get_stats(self) -> Dict:

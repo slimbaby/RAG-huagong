@@ -10,6 +10,12 @@ import json
 import re
 import logging
 
+from ..prompts.query import (
+    build_expand_prompt,
+    build_rewrite_and_route_prompt,
+    build_rewrite_prompt,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -80,9 +86,9 @@ class QueryRewriter:
         optimization_notes.append(f"意图识别：{query_type.value}，置信度{confidence:.2f}")
         keywords = self._extract_keywords(normalized)
         optimization_notes.append(f"关键词提取：{', '.join(keywords)}")
-        # 通用闲聊/问候：跳过 LLM 改写和扩展（节省 ~26s）
-        if intent == "general":
-            optimization_notes.append("通用查询，跳过LLM改写")
+        # 通用闲聊/问候/业务查询：跳过 LLM 改写和扩展（节省 ~26s）
+        if intent in ("general", "business_query"):
+            optimization_notes.append(f"{intent}，跳过LLM改写")
             return OptimizedQuery(
                 original=raw_query, rewritten=normalized, expanded_queries=[],
                 query_type=query_type, keywords=keywords, intent_confidence=confidence,
@@ -99,18 +105,28 @@ class QueryRewriter:
                 expand_usage = {}
                 logger.info(f"[optimize] COMPARISON sub_queries={sub_queries}")
             else:
-                # 非比较类：保持原有并行调用
-                (rewritten, route_from_llm, _, rewrite_usage), (expanded, expand_usage) = \
-                    await asyncio.gather(
-                        self._llm_rewrite_and_route(normalized, query_type, keywords),
-                        self._expand_queries(normalized, query_type),
-                    )
+                # 非比较类：简单查询跳过扩展（节省 ~15s LLM 调用）
+                if query_type in (QueryType.FACTUAL, QueryType.DATA_LOOKUP) and len(normalized) < 50:
+                    (rewritten, route_from_llm, _, rewrite_usage) = await self._llm_rewrite_and_route(normalized, query_type, keywords)
+                    expanded = []
+                    expand_usage = {}
+                    optimization_notes.append("简单查询，跳过扩展")
+                else:
+                    (rewritten, route_from_llm, _, rewrite_usage), (expanded, expand_usage) = \
+                        await asyncio.gather(
+                            self._llm_rewrite_and_route(normalized, query_type, keywords),
+                            self._expand_queries(normalized, query_type),
+                        )
             logger.info(f"[optimize] llm_rewritten='{rewritten}', route_from_llm='{route_from_llm}'")
             if rewritten:
                 if rewritten != normalized:
                     optimization_notes.append("LLM改写：修正语法、补充完整")
                 if route_from_llm:
-                    if route_from_llm == "kb_query" and intent == "general":
+                    # 用户明确要求查知识库时，不听LLM路由，强制走kb_query
+                    kb_explicit = any(kw in raw_query for kw in ['根据知识库', '知识库里', '知识库中', '知识库文档', '文档里', '文档中'])
+                    if kb_explicit and route_from_llm == "general" and intent == "kb_query":
+                        optimization_notes.append(f"用户明确要求查知识库，忽略LLM路由general，保持kb_query")
+                    elif route_from_llm == "kb_query" and intent == "general":
                         intent = route_from_llm
                         optimization_notes.append(f"LLM路由：{intent}（覆盖regex general）")
                     elif route_from_llm != intent:
@@ -167,12 +183,23 @@ class QueryRewriter:
         return QueryType.FACTUAL, 0.6
 
     def _classify_query_intent(self, query: str) -> str:
-        """判断用户问题是知识库查询还是通用问题。返回 'kb_query' 或 'general'。"""
+        """判断用户问题是知识库查询、业务查询还是通用问题。返回 'kb_query'、'business_query' 或 'general'。"""
         query_lower = query.lower().strip()
 
         # 通用问候/闲聊
         if re.match(r'^(你好|hello|hi|嗨|hey|早上好|下午好|晚上好)', query_lower):
             return "general"
+
+        # 业务查询关键词（订单/库存/质检）
+        business_keywords = [
+            '订单', '下单', '交期', '发货', '客户订单', '订单状态', '订单号',
+            '库存', '物料', '仓库', '入库', '出库', '安全库存', '库存量',
+            '质检', '检验', '合格', '不合格', '批次', '批次号', '质检结果',
+            '采购', '供应商', '采购单',
+        ]
+        has_business = any(kw in query_lower for kw in business_keywords)
+        if has_business:
+            return "business_query"
 
         # 通用知识关键词（无领域指向）
         general_patterns = [
@@ -209,16 +236,7 @@ class QueryRewriter:
             return [w for w in words if len(w) >= 2 and w not in self.query_stopwords][:5]
 
     async def _llm_rewrite(self, query: str, query_type: QueryType, keywords: List[str]) -> str:
-        prompt = f"""你是一个化工领域查询优化专家。请优化以下用户查询，使其更适合知识库检索。
-原始查询：{query}
-查询类型：{query_type.value}
-关键词：{', '.join(keywords)}
-优化要求：
-1. 修正语法错误和错别字
-2. 补充缺失的上下文
-3. 将口语化表达转为专业表达
-4. 保持原意不变
-只返回优化后的查询，不要解释。"""
+        prompt = build_rewrite_prompt(query, query_type.value, ', '.join(keywords))
         try:
             result = await self.llm.generate(prompt)
             if isinstance(result, dict):
@@ -234,33 +252,10 @@ class QueryRewriter:
 
     async def _llm_rewrite_and_route(self, query: str, query_type: QueryType, keywords: List[str]) -> Tuple[str, str, List[str], dict]:
         """LLM改写 + 路由分类 + 子查询分解（比较类）。返回 (rewritten, route, sub_queries, usage)；失败时 route=''。"""
-        prompt = f"""你是化工领域查询优化专家。优化用户查询用于知识库检索，并同时判断该问题的路由。
-
-原始查询：{query}
-查询类型：{query_type.value}
-关键词：{', '.join(keywords)}
-
-优化要求：
-1. 修正语法错误和错别字
-2. 补充缺失的上下文
-3. 将口语化表达转为专业表达
-4. 保持原意不变
-
-路由判断（route 字段）：
-- "kb_query"：答案可能存在于企业知识库文档中（人员信息、制度规范、设备工艺等）
-- "general"：纯闲聊、常识、时事等与知识库无关的问题"""
-
-        if query_type == QueryType.COMPARISON:
-            prompt += """
-
-子查询分解（sub_queries 字段）：
-这是一个比较类查询。请将查询分解为多个子查询，每个子查询针对一个待比较的实体，用于独立检索该实体的信息。
-例如："张三、李四、王五哪个年龄最大？" → ["张三的年龄", "李四的年龄", "王五的年龄"]
-如果不需要分解，返回空数组。"""
-
-        prompt += """
-
-只返回 JSON：{"rewritten": "...", "route": "kb_query" 或 "general", "sub_queries": [...]}"""
+        prompt = build_rewrite_and_route_prompt(
+            query, query_type.value, ', '.join(keywords),
+            is_comparison=(query_type == QueryType.COMPARISON),
+        )
         try:
             result = await self.llm.generate(prompt)
             text = result.get("text", "") if isinstance(result, dict) else str(result)
@@ -280,17 +275,14 @@ class QueryRewriter:
                         seen.add(sq)
                         sub_queries.append(sq)
                 if rewritten:
-                    return rewritten, route if route in ("kb_query", "general") else "", sub_queries[:5], usage
+                    return rewritten, route if route in ("kb_query", "general", "business_query") else "", sub_queries[:5], usage
             return "", "", [], usage
         except Exception as e:
             logger.warning(f"LLM rewrite+route failed: {e}")
             return "", "", [], {}
 
     async def _expand_queries(self, query: str, query_type: QueryType) -> List[str]:
-        prompt = f"""基于以下查询，生成3个不同角度的查询变体，用于提升知识库检索召回率。
-原始查询：{query}
-查询类型：{query_type.value}
-要求：每个变体从不同角度提问，使用同义词或相关术语，保持语义一致，每行一个查询，不要编号。"""
+        prompt = build_expand_prompt(query, query_type.value)
         try:
             result = await self.llm.generate(prompt)
             if isinstance(result, dict):

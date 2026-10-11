@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 from datetime import datetime
+import asyncio
 import contextlib
 import logging
 import os
@@ -18,6 +19,28 @@ from .auth import CurrentUser, get_current_user
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# fire-and-forget 后台任务引用集合：asyncio.create_task 只持弱引用，
+# 不保存引用的任务可能执行中途被 GC，且异常静默丢失
+_background_tasks: set = set()
+
+
+def _spawn_background(coro, *, name: str) -> asyncio.Task:
+    """创建带引用保存 + 完成回调记日志的后台任务（记忆提取等不阻塞响应的操作）"""
+    task = asyncio.create_task(coro, name=name)
+    _background_tasks.add(task)
+
+    def _on_done(t: asyncio.Task):
+        _background_tasks.discard(t)
+        if t.cancelled():
+            logger.warning(f"后台任务 {name} 被取消")
+            return
+        exc = t.exception()
+        if exc is not None:
+            logger.warning(f"后台任务 {name} 失败: {exc}", exc_info=exc)
+
+    task.add_done_callback(_on_done)
+    return task
 
 # 延迟初始化
 _rag_graph = None
@@ -328,9 +351,11 @@ async def chat_query(request: ChatRequest, user: CurrentUser = Depends(get_curre
         if memory_manager:
             try:
                 await memory_manager.save_turn(session_id, request.question, answer_text, citations_raw)
-                # 异步提取长期记忆（不阻塞响应）
-                import asyncio
-                asyncio.create_task(memory_manager.extract_and_store(session_id, request.question, answer_text))
+                # 异步提取长期记忆（不阻塞响应，带引用保存与异常日志）
+                _spawn_background(
+                    memory_manager.extract_and_store(session_id, request.question, answer_text),
+                    name=f"memory_extract_{session_id}",
+                )
             except Exception as e:
                 logger.warning(f"记忆保存失败: {e}")
 
@@ -488,8 +513,10 @@ async def chat_query_stream(request: ChatRequest, user: CurrentUser = Depends(ge
             if memory_manager:
                 try:
                     await memory_manager.save_turn(session_id, request.question, answer_text, citations_raw)
-                    import asyncio
-                    asyncio.create_task(memory_manager.extract_and_store(session_id, request.question, answer_text))
+                    _spawn_background(
+                        memory_manager.extract_and_store(session_id, request.question, answer_text),
+                        name=f"memory_extract_{session_id}",
+                    )
                 except Exception as e:
                     logger.warning(f"记忆保存失败: {e}")
 

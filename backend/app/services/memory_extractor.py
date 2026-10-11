@@ -7,51 +7,20 @@ import logging
 import re
 from typing import Dict, List
 
+from ..prompts.memory import (
+    MEMORY_EXTRACT_PROMPT as _EXTRACT_PROMPT,
+    MEMORY_MERGE_PROMPT as _MERGE_PROMPT,
+)
+
 logger = logging.getLogger(__name__)
 
 
 class MemoryExtractor:
     """从对话中提取值得记住的信息"""
 
-    EXTRACT_PROMPT = """分析以下对话，提取值得长期记住的关键信息。
-
-## 提取规则
-只提取以下类型的信息：
-- 用户明确表达的偏好（如"我喜欢简洁的回答"、"请用表格展示"）
-- 重要决策或结论（如"我们决定采用方案A"、"这个设备需要更换"）
-- 关键事实（如"园区共有3个化工厂"、"反应釜温度上限是200度"）
-- 用户身份信息（如"我是安全管理员"、"我在环保部门工作"）
-- 用户提出的特定要求（如"回答时请引用法规编号"）
-
-## 不要提取
-- 通用问答内容（如"你好"、"谢谢"）
-- 已被知识库文档完整覆盖的标准信息
-- 临时性的操作指令（如"帮我查一下"、"再详细说说"）
-- 过于模糊或无实质内容的对话
-
-## 对话内容
-{conversation}
-
-## 输出格式
-以 JSON 数组返回，每项包含：
-- content: 记忆内容（一句话，不超过100字，必须是完整的可独立理解的陈述句）
-- type: "fact" | "preference" | "decision" | "identity"
-- importance: 0.0-1.0 的重要性分数（0.9+=关键身份/决策，0.6+=重要偏好/事实，0.3+=一般信息）
-
-如果没有值得记住的信息，返回空数组 []
-只返回 JSON 数组，不要任何解释。"""
-
-    MERGE_PROMPT = """以下两条记忆内容相似，请合并为一条更准确、更完整的记忆。
-
-记忆A: {memory_a}
-记忆B: {memory_b}
-
-合并要求：
-1. 保留更具体、更完整的信息
-2. 如果矛盾，以更新的为准
-3. 输出一条合并后的记忆，不超过100字
-
-只返回合并后的记忆文本，不要解释。"""
+    # 模板已外部化到 app/prompts/memory.py；保留类属性引用兼容既有访问路径
+    EXTRACT_PROMPT = _EXTRACT_PROMPT
+    MERGE_PROMPT = _MERGE_PROMPT
 
     def __init__(self, llm_client):
         self.llm = llm_client

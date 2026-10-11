@@ -1,0 +1,78 @@
+# CI：后端 pytest + 前端 vitest/构建
+#
+# 说明：
+# - 后端测试全部可在无外部服务（Milvus/Redis/PG）环境下运行——
+#   单元/接线测试用 stub 依赖；需要真实模型权重的用例标记 @pytest.mark.model，
+#   由 conftest 在 CI 环境变量下自动跳过。
+# - 前端跑 vitest（无浏览器，jsdom）+ tsc/vite 构建校验。
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Sync dependencies (含 dev extra)
+        run: uv sync --extra dev
+
+      - name: Run pytest
+        run: uv run pytest tests/ -q
+        env:
+          CI: "true"   # conftest 据此跳过 @pytest.mark.model 真实模型用例
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run vitest
+        run: npm test -- --run
+
+      - name: Type check + build
+        run: npm run build
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker-compose interpolation
+        working-directory: docker
+        env:
+          REDIS_PASSWORD: ci-dummy
+          POSTGRES_PASSWORD: ci-dummy
+          MYSQL_ROOT_PASSWORD: ci-dummy
+          MYSQL_PASSWORD: ci-dummy
+          MINIO_ROOT_USER: ci-dummy
+          MINIO_ROOT_PASSWORD: ci-dummy
+          RAGFLOW_SECRET_KEY: ci-dummy
+        run: docker compose config -q

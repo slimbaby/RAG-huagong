@@ -10,6 +10,17 @@ import openai
 logger = logging.getLogger(__name__)
 
 
+# 瞬态失败（值得重试 + 计入熔断）的 openai 异常类型：
+# 超时 / 连接故障 / 429 限流 / 5xx。业务性错误（401、400、解析失败等）
+# 不重试不计熔断——重试不会让它们成功，只会放大故障
+_RETRYABLE_LLM_ERRORS = (
+    openai.APITimeoutError,
+    openai.APIConnectionError,
+    openai.RateLimitError,
+    openai.InternalServerError,
+)
+
+
 class LLMService:
     """LLM服务客户端"""
 
@@ -20,13 +31,31 @@ class LLMService:
         self.temperature = temperature
         self.max_tokens = max_tokens
 
+    async def _create_completion(self, **kwargs):
+        """所有 completions 调用的唯一入口：韧性执行器包裹。
+
+        - 熔断器 "llm"：连续瞬态失败 5 次后 OPEN，快速失败防止级联
+          （上层节点已有降级路径：查询优化回退原句、生成节点返回错误答案）；
+        - 重试：仅瞬态异常，指数退避 + 抖动，总尝试次数 = llm_max_retries（默认 3）；
+        - 超时：由 openai SDK 的显式 timeout 承担，执行器不叠加
+          （asyncio.wait_for 掐断 SDK 调用会留下悬挂连接，得不偿失）。
+        """
+        from ..resilience.executor import get_executor
+        from ..core.resilience_config import resilience_config
+        return await get_executor().execute_async(
+            "llm",
+            lambda: self.client.chat.completions.create(**kwargs),
+            max_attempts=resilience_config.iteration_limits.llm_max_retries,
+            retryable=_RETRYABLE_LLM_ERRORS,
+        )
+
     async def generate(self, prompt: str, system_prompt: Optional[str] = None, temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> Dict:
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
         try:
-            response = await self.client.chat.completions.create(
+            response = await self._create_completion(
                 model=self.model_name, messages=messages,
                 temperature=temperature or self.temperature,
                 max_tokens=max_tokens or self.max_tokens,
@@ -46,7 +75,7 @@ class LLMService:
 
     async def chat(self, messages: List[dict], temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> Dict:
         try:
-            response = await self.client.chat.completions.create(
+            response = await self._create_completion(
                 model=self.model_name, messages=messages,
                 temperature=temperature or self.temperature,
                 max_tokens=max_tokens or self.max_tokens,
@@ -71,7 +100,7 @@ class LLMService:
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
         ]}]
         try:
-            response = await self.client.chat.completions.create(
+            response = await self._create_completion(
                 model=self.model_name, messages=messages,
                 temperature=temperature or self.temperature,
                 max_tokens=max_tokens or self.max_tokens,
@@ -94,7 +123,7 @@ class LLMService:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"
 
-            response = await self.client.chat.completions.create(**kwargs)
+            response = await self._create_completion(**kwargs)
             message = response.choices[0].message
 
             result = {

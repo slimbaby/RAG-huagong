@@ -150,7 +150,9 @@ def create_rag_graph(deps: Dict[str, Any] = None):
     流程: query_optimize -> [route_intent] -> kb_query: vectorize -> retrieval -> reranker -> check_confidence -> evidence_judge -> [retrieve_more | generate]
                                             -> general: generate
     """
-    workflow = StateGraph(dict)
+    # 绑定 RAGState TypedDict（而非裸 dict）：节点写入未声明的键会被拒绝，
+    # 状态字段获得编译期文档与校验；新增字段先在 state.py 声明
+    workflow = StateGraph(RAGState)
 
     workflow.add_node("query_optimize", _make_wrapper(deps, query_optimize_node, "query_optimize"))
     workflow.add_node("vectorize", _make_wrapper(deps, vectorize_node, "vectorize"))
@@ -162,10 +164,11 @@ def create_rag_graph(deps: Dict[str, Any] = None):
 
     workflow.set_entry_point("query_optimize")
 
-    # 意图路由：kb_query 走检索流程，general 直接生成
+    # 意图路由：kb_query 走检索流程，general 直接生成，business 走工具调用
     workflow.add_conditional_edges("query_optimize", route_after_optimize, {
         "kb_query": "vectorize",
         "general": "generate",
+        "business": "generate",
     })
 
     workflow.add_edge("vectorize", "retrieval")
@@ -189,7 +192,8 @@ def create_agent_graph(deps: Dict[str, Any] = None):
                                            -> general: generate
     用于未来多Agent协作场景（ERP、CRM、采购等）
     """
-    workflow = StateGraph(dict)
+    # AgentState 继承 RAGState（共用节点集），另含 messages 等 Agent 扩展字段
+    workflow = StateGraph(AgentState)
 
     workflow.add_node("query_optimize", _make_wrapper(deps, query_optimize_node, "query_optimize"))
     workflow.add_node("vectorize", _make_wrapper(deps, vectorize_node, "vectorize"))
@@ -206,6 +210,7 @@ def create_agent_graph(deps: Dict[str, Any] = None):
     workflow.add_conditional_edges("query_optimize", route_after_optimize, {
         "kb_query": "vectorize",
         "general": "generate",
+        "business": "generate",
     })
 
     workflow.add_edge("vectorize", "retrieval")

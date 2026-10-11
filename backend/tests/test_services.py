@@ -43,6 +43,7 @@ def test_llm_service_init():
     assert service.model_name == "test-model"
 
 
+@pytest.mark.model
 def test_embedding_service_init():
     import importlib
     if importlib.util.find_spec("sentence_transformers") is None:

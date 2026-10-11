@@ -17,7 +17,8 @@ const LoginPage: React.FC = () => {
       const res = mode === 'login'
         ? await login(values.username, values.password)
         : await register(values.username, values.password);
-      // 登录/注册后拉一次 /me 拿角色信息
+      // 先存token，再用token拉/me拿角色信息
+      setAuth(res.access_token, res.username);
       const { getMe } = await import('../api/auth');
       const me = await getMe();
       setAuth(res.access_token, res.username, me.role_id, me.role_name, me.scope_ids);

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 import logging
 import asyncio
 
+from ..resilience.executor import get_executor
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,6 +18,16 @@ def _milvus_escape(value: str) -> str:
     返回带双引号的字符串，可直接用于 Milvus 表达式"""
     escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
+
+
+def _build_eq_expr(field: str, value: str) -> str:
+    """构造 field == "value" 形式的 Milvus 等值表达式。
+
+    _milvus_escape 返回值已含引号，调用点不得再外包一层引号——
+    此前 delete_by_file/delete_by_doc_id/query_by_file 三处曾写成
+    f'f == "{_milvus_escape(v)}"'，生成 f == ""v"" 非法表达式，
+    且异常被 except 吞掉导致删除静默失败。统一走本函数防止回归。"""
+    return f"{field} == {_milvus_escape(value)}"
 
 
 @dataclass
@@ -267,10 +279,16 @@ class HybridMilvusStore:
                 escaped = [_milvus_escape(d) for d in allowed_doc_ids]
                 expr += f' AND doc_id in [{", ".join(escaped)}]'
             logger.info(f"[_vector_search] 开始搜索, top_k={top_k}, vector维度={len(query_vector)}, expr={expr}")
-            results = self.collection.search(
-                data=[query_vector], anns_field="vector", param=search_params,
-                limit=top_k, expr=expr,
-                output_fields=["chunk_id", "content", "source_file", "file_type", "page_number", "content_type", "section_title", "table_nl_description", "doc_id"]
+            # 韧性执行器包裹：Milvus 连续故障时熔断快速失败（下方 except 接住
+            # CircuitBreakerError 返回 []，检索自动退化为 BM25 单路，不级联拖死请求）。
+            # 同步调用无法安全中断线程，故只熔断不加超时、不重试
+            results = get_executor().execute_sync(
+                "milvus",
+                lambda: self.collection.search(
+                    data=[query_vector], anns_field="vector", param=search_params,
+                    limit=top_k, expr=expr,
+                    output_fields=["chunk_id", "content", "source_file", "file_type", "page_number", "content_type", "section_title", "table_nl_description", "doc_id"]
+                ),
             )
             search_results = []
             for hits in results:
@@ -296,7 +314,12 @@ class HybridMilvusStore:
 
     def _bm25_search(self, query: str, top_k: int, allowed_chunk_ids: "Optional[set]" = None) -> List[Dict]:
         try:
-            results = self.bm25.search(query, top_k * 2 if allowed_chunk_ids else top_k)
+            # 韧性执行器包裹（同 _vector_search：仅熔断；BM25 是纯内存计算，
+            # 熔断主要防索引损坏等持续性故障时的反复异常开销）
+            results = get_executor().execute_sync(
+                "bm25",
+                lambda: self.bm25.search(query, top_k * 2 if allowed_chunk_ids else top_k),
+            )
             if allowed_chunk_ids is not None:
                 # post-filter：只保留 scope 内的 chunk
                 results = [(cid, score) for cid, score in results if cid in allowed_chunk_ids]
@@ -424,7 +447,7 @@ class HybridMilvusStore:
         if not self._connected or not self.collection:
             return
         try:
-            expr = f'source_file == "{_milvus_escape(source_file)}"'
+            expr = _build_eq_expr("source_file", source_file)
 
             def _do():
                 self.collection.delete(expr)
@@ -434,6 +457,9 @@ class HybridMilvusStore:
             await asyncio.to_thread(self._rebuild_bm25_index)
         except Exception as e:
             logger.error(f"删除文档失败: {e}")
+            # 删除失败必须让调用方感知：吞掉异常会造成孤儿 chunk 残留、
+            # 检索结果重复，且 documents.py「删除失败中止重索引」的保护失效
+            raise
 
     async def delete_by_doc_id(self, doc_id: str):
         """按 doc_id 物理删除所有关联 chunk"""
@@ -442,7 +468,7 @@ class HybridMilvusStore:
             if not self._connected or not self.collection:
                 return
         try:
-            expr = f'doc_id == "{_milvus_escape(doc_id)}"'
+            expr = _build_eq_expr("doc_id", doc_id)
 
             def _do():
                 self.collection.delete(expr)
@@ -453,6 +479,7 @@ class HybridMilvusStore:
             logger.info(f"已删除 doc_id={doc_id} 的所有 chunk")
         except Exception as e:
             logger.error(f"按doc_id删除文档失败: {e}")
+            raise
 
     async def query_by_file(self, source_file: str) -> List[Dict]:
         """按源文件名查询全部 chunk（按 chunk_index 排序）"""
@@ -463,7 +490,7 @@ class HybridMilvusStore:
             if not self._connected or not self.collection:
                 return []
 
-        expr = f'source_file == "{_milvus_escape(source_file)}"'
+        expr = _build_eq_expr("source_file", source_file)
 
         def _do():
             return self.collection.query(
