@@ -12,6 +12,7 @@ class RAGState(TypedDict):
     节点返回 schema 之外的键会被 LangGraph 拒绝/丢弃，新增状态字段必须先在此声明）"""
     # ── 运行时依赖注入（graph._make_wrapper 写入；非业务数据，不落 trace）──
     _deps: Optional[Dict[str, Any]]
+    _token_queue: Optional[Any]  # asyncio.Queue, 浫式 token 传递
     user_query: str
     session_id: Optional[str]
     task_id: Optional[str]

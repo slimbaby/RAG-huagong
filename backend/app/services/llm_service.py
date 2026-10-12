@@ -93,6 +93,40 @@ class LLMService:
             logger.error(f"LLM对话失败: {e}")
             raise
 
+    async def generate_stream(self, prompt: str, system_prompt: Optional[str] = None, temperature: Optional[float] = None, max_tokens: Optional[int] = None):
+        """流式生成：逐 token yield 文本片段"""
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        stream = await self.client.chat.completions.create(
+            model=self.model_name, messages=messages,
+            temperature=temperature or self.temperature,
+            max_tokens=max_tokens or self.max_tokens,
+            stream=True,
+        )
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta.content:
+                yield delta.content
+
+    async def chat_stream(self, messages: List[dict], temperature: Optional[float] = None, max_tokens: Optional[int] = None):
+        """流式对话：逐 token yield 文本片段"""
+        stream = await self.client.chat.completions.create(
+            model=self.model_name, messages=messages,
+            temperature=temperature or self.temperature,
+            max_tokens=max_tokens or self.max_tokens,
+            stream=True,
+        )
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta.content:
+                yield delta.content
+
     async def generate_with_image(self, prompt: str, image_data: bytes, temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> str:
         image_b64 = base64.b64encode(image_data).decode("utf-8")
         messages = [{"role": "user", "content": [

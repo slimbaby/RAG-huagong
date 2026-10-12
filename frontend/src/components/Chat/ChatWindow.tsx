@@ -59,6 +59,7 @@ const ChatWindow: React.FC = () => {
     <div style={styles.container}>
       <style>{`
         @keyframes typingDot { 0%, 100% { opacity: 0.4; transform: scale(1); } 50% { opacity: 1; transform: scale(1.3); } }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
         @media (max-width: 768px) { .chat-messages { padding: 16px !important; } .chat-input-area { padding: 12px 16px !important; } }
       `}</style>
       <div style={styles.header}>
@@ -83,7 +84,13 @@ const ChatWindow: React.FC = () => {
             <MessageBubble key={msg.id} message={msg} />
           ))
         )}
-        {loadingMsg && (hasSteps ? <StepProgressView steps={loadingMsg.steps!} /> : <TypingIndicator />)}
+        {loadingMsg && (loadingMsg.content ? (
+          <MessageBubble message={loadingMsg} />
+        ) : hasSteps ? (
+          <StepProgressView steps={loadingMsg.steps!} />
+        ) : (
+          <TypingIndicator />
+        ))}
         <div ref={messagesEndRef} />
       </div>
       <div className="chat-input-area" style={styles.inputArea}>

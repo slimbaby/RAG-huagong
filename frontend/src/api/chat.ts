@@ -13,6 +13,7 @@ export async function sendQuestionStream(
   onStep: (step: StepProgress) => void,
   onDone: (response: ChatResponse) => void,
   onError: (error: string) => void,
+  onToken?: (content: string) => void,
 ): Promise<void> {
   const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
   const token = getStoredToken();
@@ -57,6 +58,8 @@ export async function sendQuestionStream(
               status: event.status,
               data: event.data,
             });
+          } else if (event.type === 'token') {
+            onToken?.(event.content);
           } else if (event.type === 'done') {
             onDone({
               task_id: event.task_id,

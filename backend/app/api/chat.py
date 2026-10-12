@@ -456,6 +456,34 @@ async def chat_query_stream(request: ChatRequest, user: CurrentUser = Depends(ge
     tracer = deps.get("tracer")
     trace_id = None
 
+    token_queue: asyncio.Queue = asyncio.Queue()
+
+    async def _run_graph(initial_state, accumulated_state):
+        """后台协程：执行 graph，收集步骤事件，完成后放哨兵到 token_queue"""
+        from ..agents.graph import extract_span_outputs
+        step_events = []
+        root_cm = (
+            tracer.start_span(SpanType.REQUEST, "chat_query_stream", inputs={"question": request.question, "session_id": session_id})
+            if tracer else contextlib.nullcontext()
+        )
+        with root_cm as root_span:
+            if root_span is not None:
+                root_span.set_attribute("includes_sse_flush", True)
+            async for chunk in graph.astream(initial_state):
+                for node_name, updates in chunk.items():
+                    accumulated_state.update(updates)
+                    logger.info(f"[run_graph] 节点完成: {node_name}")
+                    step_data = extract_span_outputs(node_name, updates, accumulated_state)
+                    step_events.append({
+                        "type": "step",
+                        "node": node_name,
+                        "status": "completed",
+                        "data": step_data,
+                    })
+        token_queue.put_nowait(None)  # 哨兵：graph 全部完成
+        logger.info(f"[run_graph] graph 执行完成, 共 {len(step_events)} 个步骤")
+        return step_events
+
     async def event_generator():
         nonlocal trace_id
         try:
@@ -471,30 +499,28 @@ async def chat_query_stream(request: ChatRequest, user: CurrentUser = Depends(ge
                 allowed_doc_ids=allowed_doc_ids,
                 user_visible_scopes=user_visible_scopes,
             )
+            initial_state["_token_queue"] = token_queue
             accumulated_state = dict(initial_state)
 
-            from ..agents.graph import extract_span_outputs
+            # graph 后台执行，token 并发消费
+            graph_task = asyncio.create_task(_run_graph(initial_state, accumulated_state))
+            token_count = 0
 
-            # 根 span：流式场景下 duration 含 SSE 推送耗时，已标注
-            root_cm = (
-                tracer.start_span(SpanType.REQUEST, "chat_query_stream", inputs={"question": request.question, "session_id": session_id})
-                if tracer else contextlib.nullcontext()
-            )
-            with root_cm as root_span:
-                if root_span is not None:
-                    root_span.set_attribute("includes_sse_flush", True)
-                async for chunk in graph.astream(initial_state):
-                    for node_name, updates in chunk.items():
-                        accumulated_state.update(updates)
+            while True:
+                token = await token_queue.get()
+                if token is None:
+                    logger.info(f"[stream] token 流结束, 共发送 {token_count} tokens")
+                    break
+                token_count += 1
+                if token_count <= 3:
+                    logger.info(f"[stream] token #{token_count}: {token!r}")
+                yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
-                        step_data = extract_span_outputs(node_name, updates, accumulated_state)
-                        event = {
-                            "type": "step",
-                            "node": node_name,
-                            "status": "completed",
-                            "data": step_data,
-                        }
-                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            step_events = await graph_task
+
+            # 发送步骤事件（在所有 token 之后）
+            for event in step_events:
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
             answer_text = accumulated_state.get("answer", "无法生成回答")
             citations_raw = accumulated_state.get("citations", [])

@@ -222,6 +222,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             abortController: null,
           }));
         },
+        // onToken
+        (token: string) => {
+          set((state) => ({
+            messages: state.messages.map((msg) =>
+              msg.id === loadingId
+                ? { ...msg, content: msg.content + token }
+                : msg
+            ),
+          }));
+        },
       );
     } catch (error: any) {
       if (error.name === 'CanceledError' || error.name === 'AbortError') {

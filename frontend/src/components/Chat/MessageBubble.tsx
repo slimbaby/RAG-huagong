@@ -43,14 +43,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
           background: isUser ? 'linear-gradient(-100.768deg, #1A3060 14.645%, #1E3A78 85.355%)' : 'linear-gradient(-112.264deg, #121D36 14.645%, #182540 85.355%)',
           border: isUser ? '1px solid rgba(79, 140, 255, 0.15)' : '1px solid #1A2748',
         }}>
-          {message.isLoading ? (
+          {message.isLoading && !message.content ? (
             <Spin size="small" />
           ) : (
             <>
               <div style={{ margin: 0, color: '#E4EBF5', whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.6, fontFamily: "'Inter', sans-serif" }}>
-                {message.content}
+                {message.content}{message.isLoading && message.content && <span style={{ animation: 'blink 1s step-end infinite', color: '#4F8CFF' }}>▎</span>}
               </div>
-              {!isUser && message.citations && renderCitations(message.citations)}
+              {!isUser && !message.isLoading && message.citations && renderCitations(message.citations)}
             </>
           )}
         </div>

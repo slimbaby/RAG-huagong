@@ -289,7 +289,7 @@ async def _probe_denied_scopes(state: Dict[str, Any], query: str) -> List[str]:
         return []
 
 
-async def _chat_with_tools(llm_client, messages, tools_schema, tool_registry, max_rounds=2):
+async def _chat_with_tools(llm_client, messages, tools_schema, tool_registry, max_rounds=2, token_queue=None):
     """带工具调用循环的对话。返回 {"text", "usage", "tool_trace": [...]}"""
     tool_trace = []
     msgs = list(messages)
@@ -300,6 +300,8 @@ async def _chat_with_tools(llm_client, messages, tools_schema, tool_registry, ma
             usage_total[k] = usage_total.get(k, 0) + result.get("usage", {}).get(k, 0)
         calls = result.get("tool_calls") or []
         if not calls:
+            if token_queue:
+                token_queue.put_nowait(None)  # 非流式路径，直接放哨兵
             return {"text": result.get("text", ""), "usage": usage_total, "tool_trace": tool_trace}
         assistant_msg = {"role": "assistant", "content": result.get("text") or "", "tool_calls": calls}
         msgs.append(assistant_msg)
@@ -322,8 +324,27 @@ async def _chat_with_tools(llm_client, messages, tools_schema, tool_registry, ma
             tool_trace.append({"name": fn_name, "args": args, "output_preview": str(output)[:200]})
             msgs.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": output})
     # 轮次用尽，最后一次强制无工具回答
+    if token_queue:
+        token_queue.put_nowait(None)  # 非流式路径，直接放哨兵
     result = await llm_client.chat(msgs)
     return {"text": result["text"], "usage": usage_total, "tool_trace": tool_trace}
+
+
+async def _stream_to_queue(stream, queue: asyncio.Queue) -> Dict:
+    """消费 LLM 流式输出，每个 token 写入 queue，返回完整结果 dict。
+    stream 应为 LLMService.generate_stream / chat_stream 的 async generator，
+    yield 的是 str (token 文本)。"""
+    full_text = []
+    count = 0
+    async for token in stream:
+        full_text.append(token)
+        queue.put_nowait(token)
+        count += 1
+        if count <= 3:
+            logger.info(f"[_stream_to_queue] token #{count}: {token!r}")
+    queue.put_nowait(None)  # 哨兵：流式结束
+    logger.info(f"[_stream_to_queue] 完成, 共 {count} tokens, 总长 {len(''.join(full_text))}")
+    return {"text": "".join(full_text), "usage": {}}
 
 
 async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -373,6 +394,10 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
         ):
             denied_scope_hints = await _probe_denied_scopes(state, optimized_query)
 
+        # 流式输出：有 token queue 时启用
+        token_queue = state.get("_token_queue")
+        use_streaming = token_queue is not None
+
         if memory_manager and session_id:
             messages, relevant_memories = await memory_manager.build_context(
                 session_id=session_id,
@@ -384,7 +409,9 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
             )
             logger.info(f"[generate_node] 使用记忆模式, messages={len(messages)}条, 长期记忆={len(relevant_memories)}条")
             if tool_registry:
-                result = await _chat_with_tools(llm_client, messages, TOOLS_SCHEMA, tool_registry)
+                result = await _chat_with_tools(llm_client, messages, TOOLS_SCHEMA, tool_registry, token_queue=token_queue)
+            elif use_streaming:
+                result = await _stream_to_queue(llm_client.chat_stream(messages), token_queue)
             else:
                 result = await llm_client.chat(messages)
         else:
@@ -401,7 +428,9 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
             logger.info(f"[generate_node] 使用单轮模式（无记忆系统）, query_type={query_type}")
             if tool_registry:
                 messages = [{"role": "user", "content": prompt}]
-                result = await _chat_with_tools(llm_client, messages, TOOLS_SCHEMA, tool_registry)
+                result = await _chat_with_tools(llm_client, messages, TOOLS_SCHEMA, tool_registry, token_queue=token_queue)
+            elif use_streaming:
+                result = await _stream_to_queue(llm_client.generate_stream(prompt), token_queue)
             else:
                 result = await llm_client.generate(prompt)
 
