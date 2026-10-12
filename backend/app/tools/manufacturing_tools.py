@@ -1,23 +1,27 @@
 """
 制造业工具集 - 订单查询、库存查询、质检查询
 
-只读工具，数据来自 SQLite 模拟数据库。
-首次调用时自动建库建表并填充模拟数据。
+只读工具，数据来自 SQLite 数据库。
+优先从 Excel 文件加载数据（backend/app/data/*.xlsx），
+Excel 不存在时回退到内存模拟数据。
 """
 
 import json
 import logging
 import os
-import random
 import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 _DB_PATH = "./checkpoints/manufacturing.db"
 _db_ready = False
 
-# ── 模拟数据配置 ──
+# Excel 数据目录 (相对于本文件)
+_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+# ── 回退用模拟数据配置 ──
 _CUSTOMERS = ["浙江化工集团", "江苏新材料科技", "上海精细化工", "广东石化设备", "山东恒通化工"]
 _PRODUCTS = ["聚乙烯颗粒", "聚丙烯颗粒", "PVC树脂", "环氧树脂", "丙烯酸丁酯"]
 _MATERIALS = [
@@ -45,7 +49,7 @@ _ORDER_STATUSES = ["待采购", "生产中", "已发货", "已完成", "已取�
 
 
 def _ensure_db() -> bool:
-    """首次调用时创建 SQLite 数据库并填充模拟数据。"""
+    """首次调用时创建 SQLite 数据库，优先从 Excel 加载数据。"""
     global _db_ready
     if _db_ready:
         return True
@@ -56,10 +60,16 @@ def _ensure_db() -> bool:
         conn = sqlite3.connect(_DB_PATH)
         conn.execute("PRAGMA journal_mode=WAL")
         _create_tables(conn)
-        _seed_data(conn)
+
+        # 优先从 Excel 加载
+        if _load_from_excel(conn):
+            logger.info(f"[manufacturing_tools] 从 Excel 加载数据完成: {_DB_PATH}")
+        else:
+            _seed_data_fallback(conn)
+            logger.info(f"[manufacturing_tools] Excel 不可用，使用回退模拟数据: {_DB_PATH}")
+
         conn.close()
         _db_ready = True
-        logger.info(f"[manufacturing_tools] 数据库初始化完成: {_DB_PATH}")
         return True
     except Exception as e:
         logger.error(f"[manufacturing_tools] 数据库初始化失败: {e}")
@@ -87,7 +97,8 @@ def _create_tables(conn: sqlite3.Connection):
             unit TEXT NOT NULL,
             warehouse TEXT NOT NULL,
             last_inbound TEXT,
-            safety_stock REAL DEFAULT 0
+            safety_stock REAL DEFAULT 0,
+            status TEXT DEFAULT '正常'
         );
         CREATE TABLE quality_inspections (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,11 +113,190 @@ def _create_tables(conn: sqlite3.Connection):
     """)
 
 
-def _seed_data(conn: sqlite3.Connection):
+def _find_excel(filename: str) -> str:
+    """在 data 目录查找 Excel 文件"""
+    candidates = [_DATA_DIR / filename, Path("/app/data") / filename]
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    return ""
+
+
+def _load_from_excel(conn: sqlite3.Connection) -> bool:
+    """从 Excel 文件加载数据到 SQLite。成功返回 True。"""
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        logger.warning("[manufacturing_tools] openpyxl 未安装，无法读取 Excel")
+        return False
+
+    order_file = _find_excel("订单数据.xlsx")
+    inventory_file = _find_excel("库存数据.xlsx")
+    quality_file = _find_excel("质检数据.xlsx")
+
+    if not all([order_file, inventory_file, quality_file]):
+        missing = []
+        if not order_file:
+            missing.append("订单数据.xlsx")
+        if not inventory_file:
+            missing.append("库存数据.xlsx")
+        if not quality_file:
+            missing.append("质检数据.xlsx")
+        logger.warning(f"[manufacturing_tools] Excel 文件缺失: {missing}")
+        return False
+
+    try:
+        _load_orders_from_excel(conn, order_file)
+        _load_inventory_from_excel(conn, inventory_file)
+        _load_quality_from_excel(conn, quality_file)
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"[manufacturing_tools] Excel 数据加载失败: {e}")
+        return False
+
+
+def _read_excel_rows(filepath: str):
+    """读取 Excel 文件，返回 (headers, rows)"""
+    from openpyxl import load_workbook
+    wb = load_workbook(filepath, read_only=True, data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    wb.close()
+    if not rows:
+        return [], []
+    header = [str(h or "").strip() for h in rows[0]]
+    return header, rows[1:]
+
+
+def _col_index(header: list, keyword: str) -> int:
+    """按关键词模糊匹配列索引"""
+    for i, h in enumerate(header):
+        if keyword in h:
+            return i
+    return -1
+
+
+def _cell(row, idx, default=""):
+    """安全取单元格值，datetime 自动格式化为 YYYY-MM-DD"""
+    if idx < 0 or idx >= len(row):
+        return default
+    v = row[idx]
+    if v is None:
+        return default
+    if isinstance(v, datetime):
+        return v.strftime("%Y-%m-%d")
+    return v
+
+
+def _load_orders_from_excel(conn: sqlite3.Connection, filepath: str):
+    header, rows = _read_excel_rows(filepath)
+    c_id = _col_index(header, "订单号")
+    c_cust = _col_index(header, "客户名称")
+    c_prod = _col_index(header, "产品名称")
+    c_qty = _col_index(header, "数量")
+    c_price = _col_index(header, "单价")
+    c_status = _col_index(header, "状态")
+    c_order = _col_index(header, "下单日期")
+    c_delivery = _col_index(header, "交货日期")
+    c_resp = _col_index(header, "负责人")
+
+    count = 0
+    for row in rows:
+        order_id = str(_cell(row, c_id, "")).strip()
+        if not order_id:
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO orders VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                order_id,
+                str(_cell(row, c_cust)),
+                str(_cell(row, c_prod)),
+                float(_cell(row, c_qty, 0)),
+                float(_cell(row, c_price, 0)),
+                str(_cell(row, c_status)),
+                str(_cell(row, c_order)),
+                str(_cell(row, c_delivery)),
+                str(_cell(row, c_resp)),
+            ),
+        )
+        count += 1
+    logger.info(f"[manufacturing_tools] 订单 Excel 加载 {count} 条 ({filepath})")
+
+
+def _load_inventory_from_excel(conn: sqlite3.Connection, filepath: str):
+    header, rows = _read_excel_rows(filepath)
+    c_code = _col_index(header, "物料编码")
+    c_name = _col_index(header, "物料名称")
+    c_spec = _col_index(header, "规格型号")
+    c_qty = _col_index(header, "库存数量")
+    c_unit = _col_index(header, "单位")
+    c_wh = _col_index(header, "仓库")
+    c_safety = _col_index(header, "安全库存")
+    c_inbound = _col_index(header, "最近入库日期")
+    c_status = _col_index(header, "状态")
+
+    count = 0
+    for row in rows:
+        code = str(_cell(row, c_code, "")).strip()
+        if not code:
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO inventory VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                code,
+                str(_cell(row, c_name)),
+                str(_cell(row, c_spec)),
+                float(_cell(row, c_qty, 0)),
+                str(_cell(row, c_unit)),
+                str(_cell(row, c_wh)),
+                str(_cell(row, c_inbound)),
+                float(_cell(row, c_safety, 0)),
+                str(_cell(row, c_status)),
+            ),
+        )
+        count += 1
+    logger.info(f"[manufacturing_tools] 库存 Excel 加载 {count} 条 ({filepath})")
+
+
+def _load_quality_from_excel(conn: sqlite3.Connection, filepath: str):
+    header, rows = _read_excel_rows(filepath)
+    c_batch = _col_index(header, "批次号")
+    c_product = _col_index(header, "产品名称")
+    c_item = _col_index(header, "检验项目")
+    c_result = _col_index(header, "判定")
+    c_inspector = _col_index(header, "检验员")
+    c_date = _col_index(header, "检验日期")
+    c_remark = _col_index(header, "备注")
+
+    count = 0
+    for row in rows:
+        batch = str(_cell(row, c_batch, "")).strip()
+        if not batch:
+            continue
+        conn.execute(
+            "INSERT INTO quality_inspections (batch_no, material_name, inspection_item, result, inspector, inspection_date, remark) VALUES (?,?,?,?,?,?,?)",
+            (
+                batch,
+                str(_cell(row, c_product)),
+                str(_cell(row, c_item)),
+                str(_cell(row, c_result, "合格")),
+                str(_cell(row, c_inspector)),
+                str(_cell(row, c_date)),
+                str(_cell(row, c_remark, "")),
+            ),
+        )
+        count += 1
+    logger.info(f"[manufacturing_tools] 质检 Excel 加载 {count} 条 ({filepath})")
+
+
+def _seed_data_fallback(conn: sqlite3.Connection):
+    """Excel 不可用时的回退: 使用内存模拟数据。"""
+    import random
     random.seed(42)
     base_date = datetime(2025, 1, 1)
 
-    # ── 订单 (50 条) ──
     people = ["陈经理", "刘主管", "赵经理", "孙主管", "周经理"]
     for i in range(1, 51):
         order_date = base_date + timedelta(days=random.randint(0, 500))
@@ -127,21 +317,20 @@ def _seed_data(conn: sqlite3.Connection):
             ),
         )
 
-    # ── 库存 (10 种物料) ──
     for code, name, unit, base_qty in _MATERIALS:
         qty = round(base_qty * random.uniform(0.3, 1.5), 1)
         last_in = base_date + timedelta(days=random.randint(30, 500))
         conn.execute(
-            "INSERT INTO inventory VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO inventory VALUES (?,?,?,?,?,?,?,?,?)",
             (
-                code, name, f"标准规格", qty, unit,
+                code, name, "标准规格", qty, unit,
                 random.choice(_WAREHOUSES),
                 last_in.strftime("%Y-%m-%d"),
                 round(base_qty * 0.3, 1),
+                "正常",
             ),
         )
 
-    # ── 质检 (100 条) ──
     for i in range(1, 101):
         product = random.choice(_PRODUCTS)
         item = random.choice(_INSPECTION_ITEMS.get(product, ["外观"]))
