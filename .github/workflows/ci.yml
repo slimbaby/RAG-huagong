@@ -75,4 +75,6 @@ jobs:
           MINIO_ROOT_USER: ci-dummy
           MINIO_ROOT_PASSWORD: ci-dummy
           RAGFLOW_SECRET_KEY: ci-dummy
-        run: docker compose config -q
+        run: |
+          touch ../.env
+          docker compose config -q
