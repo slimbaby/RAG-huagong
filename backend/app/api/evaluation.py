@@ -274,11 +274,28 @@ async def _run_eval_task(task_id: str, request: EvalRunRequest):
         # 报告保存到数据库
         await report.save_to_db()
 
+        # ── 反思归因：低分 case → 系统级教训 ──
+        # 反思失败不影响评测结果，故单独 try/except
+        lessons_written = 0
+        try:
+            from ..core.config import settings
+            from ..evaluation.reflector import EvalReflector
+            from ..services.lesson_store import get_lesson_store
+
+            if getattr(settings, "LESSON_INJECTION_ENABLED", True):
+                lesson_store = get_lesson_store(config=settings, llm_client=llm_client)
+                reflector = EvalReflector(lesson_store, llm_client=llm_client)
+                written = await reflector.reflect_report(report)
+                lessons_written = len(written)
+        except Exception as e:
+            logger.warning(f"评测反思归因失败（不影响评测结果）: {e}")
+
         await _update_eval_task(task_id, {
             "status": "completed",
             "eval_id": report.eval_id,
             "avg_score": report.avg_score,
             "gate_passed": report.gate_passed,
+            "lessons_written": lessons_written,
         })
     except Exception as e:
         logger.error(f"评测任务失败: {e}", exc_info=True)

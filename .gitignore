@@ -35,6 +35,8 @@ bm25_index/
 law_archives/
 checkpoints/
 logs/
+lessons/
+memories/
 *.jsonl
 *.pickle
 

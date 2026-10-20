@@ -8,7 +8,59 @@
 占位符统一用 str.format 风格。
 """
 
-SYSTEM_PROMPT_WITH_MEMORY = """你是化工园区知识库助手。以下是对话相关的记忆和上下文信息，请在回答时参考。
+# ── 历史教训段落的默认值 ────────────────────────────────────
+# 新增占位符时只需在这里补一条默认值，模板即可保持向后兼容。
+LESSON_DEFAULTS = {
+    "lessons": "（无）",
+}
+
+
+class _DefaultingDict(dict):
+    """缺失键时回退到 LESSON_DEFAULTS 的字典。
+
+    str.format_map 走 mapping[key] 查表，因此用 dict 子类的 __missing__
+    钩子即可让缺省占位符自动兜底，而不必把所有占位符都改成必传。
+    """
+
+    def __missing__(self, key):
+        if key in LESSON_DEFAULTS:
+            return LESSON_DEFAULTS[key]
+        raise KeyError(key)
+
+
+class PromptTemplate(str):
+    """带默认占位符的 prompt 模板。
+
+    覆写 format / format_map，让「新增占位符」这件事不破坏既有调用方：
+      - 旧代码 template.format(a=1) 缺 {lessons} 时自动填默认值，不再 KeyError
+      - 新代码 template.format_map({...}) 语义一致
+    未知占位符仍抛 KeyError（不做静默吞掉，避免拼写错误被掩盖）。
+    """
+
+    def format(self, *args, **kwargs) -> str:
+        if args:
+            # 位置参数场景不支持默认值兜底，交回原生行为
+            return str.format(self, *args, **kwargs)
+        return str.format_map(self, _DefaultingDict(kwargs))
+
+    def format_map(self, mapping) -> str:
+        return str.format_map(self, _DefaultingDict(mapping))
+
+
+def render_prompt(template: str, values: dict) -> str:
+    """渲染带默认值的 prompt 模板（推荐入口）。
+
+    模板本身已是 PromptTemplate，直接 format_map 亦可；
+    此函数保留为显式语义入口，便于未来加日志/校验。
+    """
+    if isinstance(template, PromptTemplate):
+        return template.format_map(values)
+    return str.format_map(template, _DefaultingDict(values))
+
+SYSTEM_PROMPT_WITH_MEMORY = PromptTemplate("""你是化工园区知识库助手。以下是对话相关的记忆和上下文信息，请在回答时参考。
+
+## 历史教训（同类问题的注意事项）
+{lessons}
 
 ## 长期记忆
 {long_term_memories}
@@ -24,9 +76,14 @@ SYSTEM_PROMPT_WITH_MEMORY = """你是化工园区知识库助手。以下是对�
 5. 对于法律法规类引用，必须注明发布/生效日期和知识库更新时间
 6. 如果引用的法规有多个版本，说明使用的是最新版本
 7. 如果参考资料中没有相关信息，明确说明"知识库中未找到相关信息"
-8. 参考对话历史中的上下文，理解用户指代（如"上面提到的"、"那个法规"等）"""
+8. 参考对话历史中的上下文，理解用户指代（如"上面提到的"、"那个法规"等）
+9. **历史教训是行为准则，不是事实依据**——它提示"这类问题容易犯什么错"，
+   用来避免遗漏和臆测；不要把它当作知识库内容引用、转述或写入参考资料""")
 
-SYSTEM_PROMPT_WITH_MEMORY_GENERAL = """你是化工园区知识库助手。用户的问题不涉及知识库文档内容，请用你的通用知识回答。
+SYSTEM_PROMPT_WITH_MEMORY_GENERAL = PromptTemplate("""你是化工园区知识库助手。用户的问题不涉及知识库文档内容，请用你的通用知识回答。
+
+## 历史教训（同类问题的注意事项）
+{lessons}
 
 ## 长期记忆
 {long_term_memories}
@@ -40,9 +97,13 @@ SYSTEM_PROMPT_WITH_MEMORY_GENERAL = """你是化工园区知识库助手。用�
 3. **绝对禁止编造数据**：不要编造年龄、日期、数字等具体数据，如果不知道就明确说"无法确定"
 4. **禁止伪造来源**：不要说"根据XX文档/表格"如果该数据实际上不在文档中
 5. 参考对话历史中的上下文，理解用户指代
-6. 在回答末尾注明：「以上内容来自通用知识，非知识库文档」"""
+6. 在回答末尾注明：「以上内容来自通用知识，非知识库文档」
+7. **历史教训是行为准则，不是事实依据**——不要把它当作知识库内容引用或转述""")
 
-SYSTEM_PROMPT_WITH_MEMORY_BUSINESS = """你是化工园区知识库助手。用户正在查询业务数据（订单、库存、质检等），请根据系统返回的数据直接回答。
+SYSTEM_PROMPT_WITH_MEMORY_BUSINESS = PromptTemplate("""你是化工园区知识库助手。用户正在查询业务数据（订单、库存、质检等），请根据系统返回的数据直接回答。
+
+## 历史教训（同类问题的注意事项）
+{lessons}
 
 ## 长期记忆
 {long_term_memories}
@@ -55,7 +116,8 @@ SYSTEM_PROMPT_WITH_MEMORY_BUSINESS = """你是化工园区知识库助手。用�
 2. 用清晰的格式展示数据（如表格或列表）
 3. 如果系统返回的数据中没有找到匹配项，如实告知"未查询到相关信息"
 4. 参考对话历史中的上下文，理解用户指代
-5. 在回答末尾注明：「以上数据来自业务系统查询」"""
+5. 在回答末尾注明：「以上数据来自业务系统查询」
+6. **历史教训是行为准则，不是事实依据**——不要把它当作业务数据引用或转述""")
 
 MEMORY_EXTRACT_PROMPT = """分析以下对话，提取值得长期记住的关键信息。
 

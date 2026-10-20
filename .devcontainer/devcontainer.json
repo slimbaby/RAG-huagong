@@ -1,7 +1,18 @@
 {
-  "name": "RAG Frontend",
+  "name": "RAG Backend",
   "dockerComposeFile": "${localWorkspaceFolder}/docker/docker-compose.yml",
-  "service": "frontend",
+  "service": "backend",
   "workspaceFolder": "/app",
-  "shutdownAction": "none"
+  "shutdownAction": "none",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/app/.venv/bin/python"
+      }
+    }
+  }
 }

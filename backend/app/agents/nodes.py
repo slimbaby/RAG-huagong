@@ -361,9 +361,20 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
     session_id = state.get("session_id", "")
     tracer = deps.get("tracer")
     tool_registry = deps.get("tool_registry")
+    lesson_store = deps.get("lesson_store")
     # RBAC 兜底：检索为空时探测其他 scope 是否有结果
     user_visible_scopes = state.get("user_visible_scopes")
     denied_scope_hints = list(state.get("denied_scope_hints") or [])
+
+    # ── 反思教训注入：系统级无条件 + 会话级按 session 召回 ──
+    # 教训是"行为准则"，与长期记忆/参考资料分属不同语义位，单独成段
+    lesson_text = "（无）"
+    if lesson_store:
+        try:
+            lesson_text = lesson_store.build_lesson_text(session_id=session_id)
+        except Exception as e:
+            logger.warning(f"[generate_node] 教训召回失败，跳过注入: {e}")
+            lesson_text = "（无）"
 
     if not llm_client:
         return {
@@ -406,6 +417,7 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 intent=intent,
                 retrieval_confident=retrieval_confident,
                 query_type=query_type,
+                lesson_text=lesson_text,
             )
             logger.info(f"[generate_node] 使用记忆模式, messages={len(messages)}条, 长期记忆={len(relevant_memories)}条")
             if tool_registry:
@@ -426,6 +438,10 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     context=kb_context, question=optimized_query
                 )
             logger.info(f"[generate_node] 使用单轮模式（无记忆系统）, query_type={query_type}")
+            # 单轮模式没有 build_context 承载教训段，这里直接追加到 prompt 末尾，
+            # 保证有无记忆系统两条路径的教训注入语义一致
+            if lesson_text and lesson_text != "（无）":
+                prompt += f"\n\n## 历史教训（同类问题的注意事项）\n{lesson_text}"
             if tool_registry:
                 messages = [{"role": "user", "content": prompt}]
                 result = await _chat_with_tools(llm_client, messages, TOOLS_SCHEMA, tool_registry, token_queue=token_queue)

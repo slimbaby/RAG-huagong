@@ -151,6 +151,18 @@ def get_deps():
                 except Exception as e:
                     logger.warning(f"MemoryManager初始化失败: {e}")
 
+            # 反思教训存储（lesson）：与记忆系统解耦，独立生命周期
+            # 用 service 层单例，保证与评测侧 reflector 操作同一个实例
+            # （多实例并发写 JSONL 会互相覆盖）
+            lesson_store = None
+            if getattr(settings, "LESSON_INJECTION_ENABLED", True):
+                try:
+                    from ..services.lesson_store import get_lesson_store
+                    lesson_store = get_lesson_store(config=settings, llm_client=llm_client)
+                    logger.info("LessonStore初始化完成")
+                except Exception as e:
+                    logger.warning(f"LessonStore初始化失败: {e}")
+
             _deps = {
                 "query_rewriter": rewriter,
                 "citation_service": citation,
@@ -162,6 +174,7 @@ def get_deps():
                 "reranker_service": reranker_service,
                 "session_store": session_store,
                 "memory_manager": memory_manager,
+                "lesson_store": lesson_store,
                 "tool_registry": None,
                 "fast_llm_client": None,
             }

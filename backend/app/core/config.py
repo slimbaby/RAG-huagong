@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     MEMORY_RECALL_TOP_K: int = 5              # 每次召回的记忆条数
     MEMORY_TOKEN_BUDGET: int = 1000           # 记忆注入的 Token 预算
 
+    # 反思教训（Lesson）配置
+    LESSON_INJECTION_ENABLED: bool = True      # 教训注入总开关（关闭即完全不影响回答）
+    LESSON_INJECTION_SYSTEM: bool = True       # 系统级教训注入（离线评测归因产出）
+    LESSON_INJECTION_SESSION: bool = True      # 会话级教训注入（在线自评失败产出）
+    LESSON_MAX_SYSTEM: int = 10                # 系统级教训上限，超出按 confidence×importance 淘汰
+    LESSON_MAX_SESSION: int = 5                # 单会话注入上限
+    LESSON_MIN_CONFIDENCE: float = 0.5         # 置信度门槛，低于此值不写入（防错误教训自我强化）
+    LESSON_STORAGE_PATH: str = "./lessons"     # 教训持久化目录
+
     # 认证配置
     AUTH_ENABLED: bool = True
     JWT_SECRET_KEY: str = ""  # 为空时启动自动生成随机密钥（重启后旧 token 全部失效）

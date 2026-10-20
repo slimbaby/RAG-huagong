@@ -17,6 +17,7 @@ from ..prompts.memory import (
     SYSTEM_PROMPT_WITH_MEMORY as _SYS_PROMPT_KB,
     SYSTEM_PROMPT_WITH_MEMORY_GENERAL as _SYS_PROMPT_GENERAL,
     SYSTEM_PROMPT_WITH_MEMORY_BUSINESS as _SYS_PROMPT_BUSINESS,
+    render_prompt as _render_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -280,8 +281,14 @@ class MemoryManager:
     async def build_context(self, session_id: str, user_query: str,
                             kb_context: str = "", intent: str = "kb_query",
                             retrieval_confident: bool = True,
-                            query_type: str = "factual") -> tuple:
+                            query_type: str = "factual",
+                            lesson_text: str = "") -> tuple:
         """构建完整的多轮对话 messages 数组，供 LLM.chat() 使用
+
+        Args:
+            lesson_text: 反思教训文本（由 LessonStore 渲染后传入）。
+                与长期记忆分属不同语义位——教训是"行为准则"，
+                长期记忆是"事实/背景"，在 prompt 中独立成段。
 
         Returns:
             (messages, relevant_memories) — messages 供 LLM 使用，memories 供 tracing
@@ -295,26 +302,33 @@ class MemoryManager:
         # 3. 格式化长期记忆
         memory_text = self._format_memories(relevant_memories)
 
+        # 3.5 格式化历史教训（独立语义位，勿与长期记忆混排）
+        if not lesson_text:
+            lesson_text = "（无）"
+
         # 4. 格式化对话历史
         history_text = self._format_chat_history(chat_history)
 
         # 5. 构建 system prompt
         use_general = (intent == "general") or (not retrieval_confident)
         if intent == "business_query":
-            system_prompt = self.SYSTEM_PROMPT_WITH_MEMORY_BUSINESS.format(
-                long_term_memories=memory_text,
-                chat_history=history_text,
-            )
+            system_prompt = _render_prompt(self.SYSTEM_PROMPT_WITH_MEMORY_BUSINESS, {
+                "long_term_memories": memory_text,
+                "chat_history": history_text,
+                "lessons": lesson_text,
+            })
         elif use_general:
-            system_prompt = self.SYSTEM_PROMPT_WITH_MEMORY_GENERAL.format(
-                long_term_memories=memory_text,
-                chat_history=history_text,
-            )
+            system_prompt = _render_prompt(self.SYSTEM_PROMPT_WITH_MEMORY_GENERAL, {
+                "long_term_memories": memory_text,
+                "chat_history": history_text,
+                "lessons": lesson_text,
+            })
         else:
-            system_prompt = self.SYSTEM_PROMPT_WITH_MEMORY.format(
-                long_term_memories=memory_text,
-                chat_history=history_text,
-            )
+            system_prompt = _render_prompt(self.SYSTEM_PROMPT_WITH_MEMORY, {
+                "long_term_memories": memory_text,
+                "chat_history": history_text,
+                "lessons": lesson_text,
+            })
 
         # 6. 如果有知识库上下文，附加到 system prompt
         if kb_context and not use_general and intent != "business_query":
