@@ -44,6 +44,7 @@
 | OCR | PaddleOCR + Tesseract | 双引擎，PaddleOCR 优先，Tesseract 兜底 |
 | 文档解析 | PyMuPDF / python-docx / pandas | 支持 PDF、Word、Excel、CSV、TXT、Markdown、JSON |
 | 对话记忆 | Redis + Milvus + JSONL | 三层架构：短期(会话列表) + 长期(向量语义召回) + 工作记忆 |
+| 反思教训 | JSONL + 语义分区注入 | LessonStore：系统级(评测归因) + 会话级(自评失败)两级，独立语义位注入 prompt |
 | 评测 | LLM Judge + 自定义指标 | 6 维度评分，质量门禁，自动回归检测 |
 | 数据库 | PostgreSQL 15 + Redis 7 | PostgreSQL 存评测数据，Redis 存会话和任务状态 |
 | 容错 | 熔断器 + 超时 + 重试 | 已实现，可接入 RAG 流程 |
@@ -101,7 +102,7 @@
   │  置信度检查 ──▶ 不足 → 通用问答               │
   │    │                                          │
   │    ▼                                          │
-  │  上下文构建 (引用标注 + 记忆注入)              │
+  │  上下文构建 (引用标注 + 记忆注入 + 教训注入)    │
   │    │                                          │
   └────┼──────────────────────────────────────────┘
        ▼
@@ -166,8 +167,13 @@ langgraph-rag/
 │   │   │   ├── citation_service.py # 引用标注
 │   │   │   ├── memory_manager.py   # 三层记忆系统
 │   │   │   ├── memory_extractor.py # 记忆提取
+│   │   │   ├── lesson_store.py     # 反思教训存储 (系统级/会话级)
 │   │   │   ├── session_store.py    # Redis 会话存储
 │   │   │   └── ragflow_client.py   # RAGFlow 集成
+│   │   ├── prompts/                 # 集中管理的 prompt 模板
+│   │   │   ├── rag.py               # RAG 三套 prompt (知识库/通用/比较)
+│   │   │   ├── memory.py            # 记忆注入模板 + PromptTemplate 向后兼容
+│   │   │   └── lesson.py            # 教训提炼/蒸馏/归因 prompt
 │   │   ├── tools/                  # 文档解析工具
 │   │   │   ├── pdf_parser.py       # PDF 解析 (PyMuPDF + OCR)
 │   │   │   ├── word_parser.py      # Word 解析
@@ -188,6 +194,7 @@ langgraph-rag/
 │   │   │   ├── llm_judge.py        # LLM 评审
 │   │   │   ├── dataset.py          # 评测数据集管理
 │   │   │   ├── case_generator.py   # 自动用例生成
+│   │   │   ├── reflector.py        # 评测反思归因 → 系统级教训
 │   │   │   └── report.py           # 评测报告
 │   │   ├── tracing/                # 全链路追踪
 │   │   │   ├── tracer.py           # Span 级追踪
@@ -278,6 +285,18 @@ docker compose up -d
 
 完整配置见 `.env.example`。
 
+### 依赖管理
+
+依赖版本由 `backend/uv.lock` 锁定（Docker 构建用 `uv sync --frozen`），**改完 `pyproject.toml` 必须重新生成锁文件**：
+
+```bash
+cd backend
+uv lock                    # 补齐/更新 uv.lock
+uv sync --frozen --extra dev   # 按锁文件安装
+```
+
+> ⚠️ `uv.lock` 过期于 `pyproject.toml` 会导致生产镜像缺包——`uv sync --no-dev` 装出的环境在 `import` 阶段就崩。CI 建议加 `uv lock --check` 校验。
+
 ## API 接口
 
 ### 对话
@@ -333,6 +352,51 @@ docker compose up -d
 | hallucination | 1.5 | 反幻觉（权重最高） |
 
 质量门禁阈值：overall >= 7.0, hallucination >= 7.0, citation >= 6.0。
+
+## 反思教训机制
+
+把「踩过的坑」沉淀成可复用的规则，避免同类问题重复犯错。与三层记忆**解耦独立**（生命周期、机制、语义位都不同）。
+
+### 两级教训
+
+| 级别 | scope | 来源 | 注入方式 |
+|------|-------|------|---------|
+| 系统级 | `__system__` | 评测跑完，低分 case 自动归因（`EvalReflector`） | 每次请求无条件带上（上限 10 条） |
+| 会话级 | 真实 session_id | 在线自评失败时提炼 | 按会话召回（上限 5 条） |
+
+### 语义位隔离（关键设计）
+
+教训是**行为准则**，不是事实依据。在 system prompt 中独立成段，与长期记忆、参考资料严格分开：
+
+```
+## 历史教训（同类问题的注意事项）   ← 行为准则
+## 长期记忆                          ← 背景信息
+## 参考资料                          ← 事实依据（答案内容只能来自这里）
+```
+
+prompt 里显式约束「历史教训是行为准则，不是事实依据，不要把它当作知识库内容引用」，避免 LLM 把教训当依据转述。
+
+### 防护机制
+
+| 机制 | 说明 |
+|------|------|
+| 置信度门槛 | `LESSON_MIN_CONFIDENCE=0.5`，低于此值不写入（防错误教训自我强化） |
+| 来源标记 | `[系统级·召回]` / `[本次会话·召回]`，LLM 遇冲突可自行权衡 |
+| 上限淘汰 | 系统级超上限按 `confidence × importance` 淘汰最弱者 |
+| 独立开关 | `LESSON_INJECTION_ENABLED` / `_SYSTEM` / `_SESSION` 三级开关，可一键回退 |
+| 原子落盘 | 写 `.tmp` + `os.replace`；加载时逐行容错，单行损坏不影响其余记录 |
+
+### 配置项
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `LESSON_INJECTION_ENABLED` | `True` | 教训注入总开关 |
+| `LESSON_INJECTION_SYSTEM` | `True` | 系统级教训注入 |
+| `LESSON_INJECTION_SESSION` | `True` | 会话级教训注入 |
+| `LESSON_MAX_SYSTEM` | `10` | 系统级教训上限 |
+| `LESSON_MAX_SESSION` | `5` | 单会话注入上限 |
+| `LESSON_MIN_CONFIDENCE` | `0.5` | 置信度门槛 |
+| `LESSON_STORAGE_PATH` | `./lessons` | 持久化目录 |
 
 ## 支持的文档格式
 
