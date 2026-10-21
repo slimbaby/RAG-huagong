@@ -126,10 +126,18 @@ class WorkflowEngine:
                 nxt = step.goto
 
             if step.type == "slot_extract":
+                gate_id = step.id + GATE_SUFFIX
                 # 抽取 -> 闸门
-                graph.add_edge(step.id, step.id + GATE_SUFFIX)
-                # 闸门 -> 后继
-                graph.add_edge(step.id + GATE_SUFFIX, nxt)
+                graph.add_edge(step.id, gate_id)
+                # 闸门 -> 后继；仍有缺失槽位则回到闸门再问一次。
+                # 必须走边路由而非节点内循环：LangGraph 恢复时会从节点开头
+                # 重跑，循环里第二次以后的 interrupt 之前写入 state 的中间
+                # 值不会被持久化，导致已补的槽位丢失。
+                graph.add_conditional_edges(
+                    gate_id,
+                    self._make_gate_router(gate_id, nxt),
+                    {gate_id: gate_id, nxt: nxt},
+                )
             elif step.type == "branch" or step.on_fail or step.goto:
                 graph.add_conditional_edges(
                     step.id,
@@ -151,6 +159,14 @@ class WorkflowEngine:
         mapping = {nid: nid for nid in self._node_ids(flow)}
         mapping[END] = END
         return mapping
+
+    def _make_gate_router(self, gate_id: str, nxt: str) -> Callable:
+        """闸门节点的条件路由：_gate_retry 为 True 时回到自身继续追问。"""
+
+        def router(state: WorkflowState) -> str:
+            return gate_id if state.get("_gate_retry") else nxt
+
+        return router
 
     def _make_router(self, flow: FlowDef, step: StepDef, main_ids: List[str], primary_end: Optional[str]) -> Callable:
         """条件边路由函数：读 state.goto 决定下一步"""
@@ -229,92 +245,127 @@ class WorkflowEngine:
     def _make_gate_node(self, flow: FlowDef, step: StepDef):
         """槽位闸门节点：必填槽位缺失就 interrupt 追问
 
+        设计要点（LangGraph interrupt 语义）：
+        节点内**只调用一次** interrupt。恢复时 LangGraph 从节点开头重跑全部逻辑，
+        interrupt() 返回 resume 值。若在节点内用 while 循环多次 interrupt，
+        resume 值只会按顺序匹配到各次 interrupt，且循环里的中间状态不会
+        写回 state —— 用户第一次补的槽位会丢失。
+
+        所以这里只负责「问一次 + 合并一次」，"还缺什么" 由边路由判断：
+        缺则回到本节点再问一次，不缺则走向后继。每次重入都会把已补的
+        槽位从 state 带过来，因此多轮补充不会丢数据。
+
         与抽取节点分离的原因：闸门重放时不会重复调用 LLM 抽取。
         """
 
         async def gate(state: WorkflowState) -> Dict[str, Any]:
             slots = dict(state.get("slots", {}) or {})
             required = [s for s in flow.slots if s.required]
+            missing = [s for s in required if slots.get(s.name) in (None, "")]
 
-            while True:
-                missing = [s for s in required if slots.get(s.name) in (None, "")]
-                if not missing:
-                    break
-
-                names = "、".join(s.name for s in missing)
-                payload = {
-                    "type": "slot_request",
-                    "step_id": step.id,
-                    "question": f"还需要补充以下信息：{names}。",
-                    "missing": [
-                        {
-                            "name": s.name,
-                            "type": s.type,
-                            "required": s.required,
-                            "description": s.description,
-                        }
-                        for s in missing
-                    ],
+            # 已齐备：直接放行（resume 重跑时会走到这里）
+            if not missing:
+                return {
+                    "slots": slots,
+                    "pending_question": None,
+                    "status": "running",
+                    "goto": None,
+                    # 必须显式置 False：state 里的旧值会被保留，
+                    # 若沿用上一轮的 True 会在这里原地死循环。
+                    "_gate_retry": False,
                 }
 
-                # 首次执行挂起；恢复时返回用户补充的内容
-                answer = interrupt(payload)
-                if isinstance(answer, dict):
-                    extra = answer.get("slots") or {}
-                    if not extra and answer.get("user_input"):
-                        extra = {"__raw__": answer["user_input"]}
-                elif isinstance(answer, str):
-                    extra = {"__raw__": answer}
-                else:
-                    extra = {}
+            names = "、".join(s.name for s in missing)
+            payload = {
+                "type": "slot_request",
+                "step_id": step.id,
+                "question": f"还需要补充以下信息：{names}。",
+                "missing": [
+                    {
+                        "name": s.name,
+                        "type": s.type,
+                        "required": s.required,
+                        "description": s.description,
+                    }
+                    for s in missing
+                ],
+            }
 
-                if not extra:
-                    # 用户没给内容，重新追问（再次 interrupt）
-                    continue
+            # 首次执行挂起；恢复时返回用户补充的内容
+            answer = interrupt(payload)
 
-                if "__raw__" in extra:
-                    # 自由文本：交给 LLM 再抽一次
-                    from .nodes import cast_value
-                    slots["user_input"] = extra["__raw__"]
-                    extracted = await self._reextract(flow, step, state, ctx_deps())
-                    for k, v in (extracted or {}).items():
-                        slots[k] = v
-                else:
-                    for k, v in extra.items():
-                        slots[k] = v
-                    # 顺带做类型转换
-                    from .nodes import cast_value
-                    slot_defs = {s.name: s for s in flow.slots}
-                    for k in list(slots.keys()):
-                        if k in slot_defs:
-                            slots[k] = cast_value(slots[k], slot_defs[k].type)
+            extra: Dict[str, Any] = {}
+            if isinstance(answer, dict):
+                extra = answer.get("slots") or {}
+                if not extra and answer.get("user_input"):
+                    extra = {"__raw__": answer["user_input"]}
+            elif isinstance(answer, str):
+                extra = {"__raw__": answer}
 
-            # 全部槽位齐备
+            from .nodes import cast_value
+
+            if "__raw__" in extra:
+                # 自由文本：交给 LLM 再抽一次
+                raw = extra["__raw__"]
+                extracted = await self._reextract(flow, step, raw, ctx_deps(), filled=slots)
+                slot_defs = {s.name: s for s in flow.slots}
+                for k, v in (extracted or {}).items():
+                    # 已确认的槽位不被模型返回的旧值覆盖
+                    if k in slots and slots.get(k) not in (None, ""):
+                        continue
+                    slots[k] = cast_value(v, slot_defs[k].type) if k in slot_defs else v
+            else:
+                slot_defs = {s.name: s for s in flow.slots}
+                for k, v in extra.items():
+                    slots[k] = cast_value(v, slot_defs[k].type) if k in slot_defs else v
+
+            # 合并后仍缺失时，由边路由把本节点再拉回来问一次
+            still_missing = [s.name for s in required if slots.get(s.name) in (None, "")]
+
             return {
                 "slots": slots,
-                "pending_question": None,
+                "pending_question": f"还需要补充以下信息：{'、'.join(still_missing)}。" if still_missing else None,
                 "status": "running",
                 "goto": None,
+                "_gate_retry": bool(still_missing),
             }
 
         return gate
 
-    async def _reextract(self, flow: FlowDef, step: StepDef, state: WorkflowState, deps: Dict[str, Any]) -> Dict[str, Any]:
-        """闸门里对用户自由文本再抽一次槽位"""
+    async def _reextract(
+        self,
+        flow: FlowDef,
+        step: StepDef,
+        raw_text: str,
+        deps: Dict[str, Any],
+        filled: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """闸门里对用户自由文本再抽一次槽位
+
+        filled 是已经抽到的槽位：既用于排除已确认的字段，也用于在 prompt 里
+        显式告知模型，避免它重复返回旧值把用户已确认的内容覆盖掉。
+        """
         llm = deps.get("llm_client")
         if llm is None:
             return {}
-        import json
-        import re
 
         slot_desc = "\n".join(
             f"- {s.name} ({s.type}{', 必填' if s.required else ''}): {s.description}"
             for s in flow.slots
         )
+        filled_hint = ""
+        if filled:
+            pairs = "、".join(f"{k}={v}" for k, v in filled.items())
+            remaining = [s.name for s in flow.slots if s.name not in filled]
+            filled_hint = (
+                f"\n已确认的字段（不要重复输出，也不要修改其值）：{pairs}\n"
+                f"本次只需抽取：{'、'.join(remaining) if remaining else '（无）'}\n"
+            )
         prompt = (
             f"{step.prompt or '从用户输入中抽取结构化字段。'}\n\n"
-            f"用户输入：{state.get('slots', {}).get('user_input', '')}\n\n"
-            f"可用字段定义：\n{slot_desc}\n\n"
+            f"用户输入：{raw_text}\n\n"
+            f"可用字段定义：\n{slot_desc}\n"
+            f"{filled_hint}\n"
             f"只输出 JSON 对象，key 为字段名，value 为抽取到的值。没抽到的字段不要出现。"
         )
         try:

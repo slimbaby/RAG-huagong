@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Query
 
-from ..workflows.checkpointer import get_checkpointer
+from ..workflows.checkpointer import get_checkpointer, list_thread_checkpoints
 from ..workflows.engine import get_workflow_engine
 from ..workflows.loader import get_flow_registry
 
@@ -49,24 +49,21 @@ async def list_threads(limit: int = Query(default=50, ge=1, le=200)):
     checkpointer = await get_checkpointer()
     registry = get_flow_registry()
 
-    config = {"configurable": {"thread_id": "*"}}
     results: List[Dict[str, Any]] = []
     for flow_meta in registry.list_flows():
         candidate = registry.get(flow_meta["id"], flow_meta["version"])
         if candidate is None:
             continue
-        graph = engine.get_graph(candidate.id, candidate.version, checkpointer=checkpointer)
-        if graph is None:
+        if engine.get_graph(candidate.id, candidate.version, checkpointer=checkpointer) is None:
             continue
-        try:
-            snapshots = await graph.aget_list(config, limit=limit)
-        except Exception as e:
-            logger.warning(f"列出线程失败 {candidate.id}: {e}")
-            continue
-        for s in snapshots:
-            values = getattr(s, "values", None) or {}
+        for s in await list_thread_checkpoints(checkpointer, limit=limit):
+            values = s.checkpoint.get("channel_values", {}) or {}
+            if values.get("flow_id") != candidate.id:
+                continue
             results.append({
-                "thread_id": getattr(s, "config", {}).get("configurable", {}).get("thread_id", ""),
+                "thread_id": s.config.get("configurable", {}).get("thread_id", ""),
+                "checkpoint_id": s.checkpoint.get("id", ""),
+                "ts": s.checkpoint.get("ts", ""),
                 "run_id": values.get("run_id", ""),
                 "flow_id": values.get("flow_id", ""),
                 "status": values.get("status", ""),
@@ -116,10 +113,8 @@ async def get_thread_history(thread_id: str, limit: int = Query(default=20, ge=1
         graph = engine.get_graph(candidate.id, candidate.version, checkpointer=checkpointer)
         if graph is None:
             continue
-        try:
-            history = await graph.aget_state_history(config, limit=limit)
-        except Exception:
-            continue
+        # aget_state_history 是异步生成器，必须 async for 消费，不能 await
+        history = [h async for h in graph.aget_state_history(config, limit=limit)]
         if not history:
             continue
         return {

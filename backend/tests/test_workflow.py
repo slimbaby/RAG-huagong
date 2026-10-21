@@ -394,3 +394,118 @@ async def test_state_survives_new_engine_instance(flow_dir, checkpointer):
 
     assert result["status"] == "completed"
     assert result["slots"]["amount"] == 500
+
+
+@pytest.fixture
+def two_slot_flow_dir():
+    """两个必填槽位的流程，用于验证多轮补充"""
+    with tempfile.TemporaryDirectory() as d:
+        _write_yaml(d, "two.yaml", """
+id: two
+version: 1
+name: 双槽位流程
+slots:
+  - {name: amount, type: int, required: true}
+  - {name: owner, type: str, required: true}
+steps:
+  - id: collect
+    type: slot_extract
+  - id: done
+    type: end
+""")
+        yield d
+
+
+def _pending_interrupts(snapshot):
+    out = []
+    for t in (getattr(snapshot, "tasks", None) or []):
+        for i in (getattr(t, "interrupts", None) or []):
+            out.append(getattr(i, "value", None))
+    return out
+
+
+@pytest.mark.asyncio
+async def test_gate_keeps_slots_across_multiple_rounds(two_slot_flow_dir, checkpointer):
+    """多轮补充槽位时，已补的值不能丢
+
+    LangGraph 恢复时会从节点开头重跑，节点内循环 interrupt 的中间状态
+    不会持久化。闸门因此改为「单次 interrupt + 边路由」，
+    每轮写回 state 后再由边决定是否回到闸门。
+    """
+    from app.workflows.engine import WorkflowEngine, set_deps_provider
+    from langgraph.types import Command
+
+    llm = FakeLLM({"可用字段定义": "{}"})
+    set_deps_provider(lambda: {"llm_client": llm})
+
+    registry = FlowRegistry(definitions_dir=two_slot_flow_dir)
+    registry.load()
+    engine = WorkflowEngine(registry=registry)
+    graph = engine.get_graph("two", 1, checkpointer=checkpointer)
+
+    run_id = "test_run_multi"
+    config = {"configurable": {"thread_id": run_id}}
+    await graph.ainvoke({
+        "run_id": run_id, "flow_id": "two", "flow_version": 1,
+        "slots": {}, "step_results": {}, "current_step": "collect",
+        "goto": None, "pending_approval": None, "status": "running",
+        "error": None, "metadata": {}, "user_input": "采购点东西", "pending_question": None,
+    }, config=config)
+
+    # 第一轮：两个都缺
+    snapshot = await graph.aget_state(config)
+    first = _pending_interrupts(snapshot)
+    assert first and first[0]["type"] == "slot_request"
+    assert set(first[0]["missing"][0].keys()) >= {"name", "required"}
+
+    # 只补 amount，应继续追问 owner
+    await graph.ainvoke(Command(resume={"slots": {"amount": 88}}), config=config)
+    snapshot = await graph.aget_state(config)
+    assert snapshot.values["slots"]["amount"] == 88, "第一轮补的 amount 不能丢"
+
+    second = _pending_interrupts(snapshot)
+    assert second, "仍缺 owner 时应继续挂起追问"
+    missing_names = [m["name"] for m in second[0]["missing"]]
+    assert "owner" in missing_names
+    assert "amount" not in missing_names
+
+    # 补 owner，应完成
+    result = await graph.ainvoke(Command(resume={"slots": {"owner": "张三"}}), config=config)
+    assert result["slots"]["amount"] == 88, "第二轮补的 owner 不能覆盖掉 amount"
+    assert result["slots"]["owner"] == "张三"
+    assert result["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_reextract_does_not_overwrite_filled_slot(two_slot_flow_dir, checkpointer):
+    """闸门重抽取时，已确认的槽位不被模型返回的旧值覆盖"""
+    from app.workflows.engine import WorkflowEngine, set_deps_provider
+    from langgraph.types import Command
+
+    # 首次抽取：拿到 amount
+    llm = FakeLLM({"可用字段定义": '{"amount": 88}'})
+    set_deps_provider(lambda: {"llm_client": llm})
+
+    registry = FlowRegistry(definitions_dir=two_slot_flow_dir)
+    registry.load()
+    engine = WorkflowEngine(registry=registry)
+    graph = engine.get_graph("two", 1, checkpointer=checkpointer)
+
+    run_id = "test_run_noverwrite"
+    config = {"configurable": {"thread_id": run_id}}
+    await graph.ainvoke({
+        "run_id": run_id, "flow_id": "two", "flow_version": 1,
+        "slots": {}, "step_results": {}, "current_step": "collect",
+        "goto": None, "pending_approval": None, "status": "running",
+        "error": None, "metadata": {}, "user_input": "采购", "pending_question": None,
+    }, config=config)
+    assert (await graph.aget_state(config)).values["slots"]["amount"] == 88
+
+    # 第二轮模型仍然返回旧的 amount（模拟模型复读），并补上 owner
+    llm.responses = {"可用字段定义": '{"amount": 999, "owner": "李四"}'}
+    result = await graph.ainvoke(
+        Command(resume={"user_input": "补一下负责人"}), config=config
+    )
+    assert result["slots"]["amount"] == 88, "已确认的 amount 不能被重抽取覆盖成 999"
+    assert result["slots"]["owner"] == "李四"
+    assert result["status"] == "completed"

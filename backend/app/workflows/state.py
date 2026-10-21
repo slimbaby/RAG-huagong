@@ -134,6 +134,8 @@ class WorkflowState(TypedDict, total=False):
     current_step: str
     # ── 动态跳转目标（由节点写入，条件边读取后被下一节点覆盖清空）──
     goto: Optional[str]
+    # ── 闸门节点标记：合并后仍有缺失槽位，需再问一次 ──
+    _gate_retry: bool
     # ── 人工卡点挂起信息 ──
     pending_approval: Optional[Dict[str, Any]]
     # ── 终止信息 ──

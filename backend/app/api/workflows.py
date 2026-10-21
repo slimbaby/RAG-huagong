@@ -13,7 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from .auth import CurrentUser, get_current_user
-from ..workflows.checkpointer import get_checkpointer
+from ..workflows.checkpointer import (
+    extract_interrupt_payloads,
+    get_checkpointer,
+    list_thread_checkpoints,
+)
 from ..workflows.engine import get_workflow_engine, new_run_id, set_deps_provider
 from ..workflows.loader import get_flow_registry
 
@@ -35,8 +39,12 @@ class ResumeWorkflowRequest(BaseModel):
 
 
 def _snapshot(state: Dict[str, Any]) -> Dict[str, Any]:
-    """把图状态整理成对外快照"""
-    interrupts = state.get("__interrupts__") or []
+    """把图状态整理成对外快照
+
+    注意：interrupts 不在这里产出 —— interrupt 信息不在 state 里，
+    而在 LangGraph 的快照结构中（tasks / pending_writes），
+    由调用方用 extract_interrupt_payloads 另行填充。
+    """
     return {
         "run_id": state.get("run_id", ""),
         "flow_id": state.get("flow_id", ""),
@@ -49,23 +57,13 @@ def _snapshot(state: Dict[str, Any]) -> Dict[str, Any]:
         "pending_question": state.get("pending_question"),
         "error": state.get("error"),
         "metadata": state.get("metadata", {}) or {},
-        "interrupts": interrupts,
+        "interrupts": [],
     }
 
 
 def _extract_interrupts(graph_state: Any) -> List[Dict[str, Any]]:
     """从 LangGraph 的 state snapshot 里提取 interrupt 载荷"""
-    out: List[Dict[str, Any]] = []
-    tasks = getattr(graph_state, "tasks", None) or []
-    for task in tasks:
-        interrupts = getattr(task, "interrupts", None) or []
-        for it in interrupts:
-            value = getattr(it, "value", None)
-            if value is None and isinstance(it, dict):
-                value = it.get("value")
-            if isinstance(value, dict):
-                out.append(value)
-    return out
+    return extract_interrupt_payloads(graph_state)
 
 
 @router.get("/flows", summary="列出流程定义")
@@ -237,18 +235,16 @@ async def list_runs(
         g = engine.get_graph(candidate.id, candidate.version, checkpointer=checkpointer)
         if g is None:
             continue
-        try:
-            snaps = await g.aget_list(config, limit=limit)
-        except Exception as e:
-            logger.warning(f"列出流程实例失败 {candidate.id}: {e}")
-            continue
-        for s in snaps:
-            values = getattr(s, "values", None) or {}
+        tuples = await list_thread_checkpoints(checkpointer, limit=limit)
+        for s in tuples:
+            values = s.checkpoint.get("channel_values", {}) or {}
             meta = values.get("metadata", {}) or {}
             if meta.get("username") != user.username:
                 continue
+            if values.get("flow_id") != candidate.id:
+                continue
             item = _snapshot(values)
-            item["interrupts"] = _extract_interrupts(s)
+            item["interrupts"] = extract_interrupt_payloads(s)
             results.append(item)
 
     if status:

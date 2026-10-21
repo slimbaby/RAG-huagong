@@ -13,7 +13,7 @@ LangGraph Checkpointer 管理
 import asyncio
 import logging
 import os
-from typing import Optional
+from typing import Any, Optional
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
@@ -74,3 +74,76 @@ async def close_checkpointer() -> None:
                 logger.warning(f"关闭 checkpointer 失败: {e}")
     _saver = None
     _saver_path = None
+
+
+async def list_thread_checkpoints(
+    saver: AsyncSqliteSaver,
+    limit: int = 50,
+) -> list:
+    """列出最近的 checkpoint（每个线程只取最新一条）
+
+    不能直接用 saver.alist(None)：它的 WHERE 条件是 `thread_id = ?` 精确匹配，
+    不支持 `*` 通配（传 "*" 只会去查名为 "*" 的线程）。所以这里直接查表
+    拿到 thread_id 列表，再逐个取最新快照。
+    """
+    try:
+        async with saver.lock, saver.conn.execute(
+            "SELECT thread_id, MAX(checkpoint_id) FROM checkpoints GROUP BY thread_id"
+        ) as cur:
+            rows = await cur.fetchall()
+    except Exception as e:
+        logger.warning(f"查询 checkpoint 线程列表失败: {e}")
+        return []
+
+    results = []
+    for thread_id, _ in rows:
+        try:
+            snapshot = await saver.aget_tuple(
+                {"configurable": {"thread_id": thread_id}}
+            )
+        except Exception as e:
+            logger.warning(f"读取线程 {thread_id} 快照失败: {e}")
+            continue
+        if snapshot is not None:
+            results.append(snapshot)
+
+    results.sort(key=lambda s: s.checkpoint.get("ts", ""), reverse=True)
+    return results[:limit]
+
+
+def extract_interrupt_payloads(source: Any) -> list:
+    """从快照或 CheckpointTuple 里提取 interrupt 载荷
+
+    两种来源的挂起信息位置不同：
+    - StateSnapshot（graph.aget_state）：snapshot.tasks[].interrupts[].value
+    - CheckpointTuple（saver.alist）：pending_writes 里 `__interrupt__` 通道的值
+    """
+    from langgraph._internal._constants import INTERRUPT
+
+    out = []
+
+    tasks = getattr(source, "tasks", None)
+    if tasks is not None:
+        for task in tasks:
+            for it in getattr(task, "interrupts", None) or []:
+                value = getattr(it, "value", None)
+                if value is None and isinstance(it, dict):
+                    value = it.get("value")
+                if isinstance(value, dict):
+                    out.append(value)
+        return out
+
+    # CheckpointTuple 形态：(task_id, channel, value) 三元组
+    for write in getattr(source, "pending_writes", None) or []:
+        try:
+            _task_id, channel, value = write[0], write[1], write[2]
+        except (TypeError, IndexError):
+            continue
+        if channel != INTERRUPT:
+            continue
+        for item in value if isinstance(value, (list, tuple)) else [value]:
+            payload = getattr(item, "value", None)
+            if isinstance(payload, dict):
+                out.append(payload)
+
+    return out
