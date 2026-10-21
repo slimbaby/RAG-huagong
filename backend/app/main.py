@@ -155,7 +155,7 @@ async def health_check():
     return {"status": "healthy", "service": settings.APP_NAME, "version": "2.0.0"}
 
 
-from .api import auth, chat, documents, health, resilience, errors, tracing, checkpoints, evaluation, scopes
+from .api import auth, chat, documents, health, resilience, errors, tracing, checkpoints, evaluation, scopes, workflows
 from .core.security import verify_token
 from fastapi import Depends
 
@@ -172,6 +172,7 @@ app.include_router(tracing.router, prefix="/api/tracing", tags=["链路追踪"],
 app.include_router(checkpoints.router, prefix="/api/checkpoints", tags=["检查点"], dependencies=_protected)
 app.include_router(evaluation.router, prefix="/api/eval", tags=["评测"], dependencies=_protected)
 app.include_router(scopes.router, prefix="/api/scopes", tags=["权限管理"], dependencies=_protected)
+app.include_router(workflows.router, prefix="/api/workflows", tags=["固定流程"], dependencies=_protected)
 
 
 @app.on_event("startup")
@@ -218,12 +219,30 @@ async def startup_event():
             logger.info("Embedding模型预加载完成")
     except Exception as e:
         logger.warning(f"Embedding模型预加载失败（首次请求时会重新加载）: {e}")
+
+    # 初始化固定流程引擎（复用 chat 侧 deps 单例）
+    try:
+        from app.api.chat import init_workflow_deps_provider
+        from app.workflows.loader import get_flow_registry
+        from app.workflows.handlers import register_builtin_handlers
+        init_workflow_deps_provider()
+        register_builtin_handlers()
+        count = get_flow_registry().load(force=True)
+        logger.info(f"固定流程引擎初始化完成，加载 {count} 个流程定义")
+    except Exception as e:
+        logger.warning(f"固定流程引擎初始化失败: {e}")
+
     logger.info("Application started successfully")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Shutting down application...")
+    try:
+        from app.workflows.checkpointer import close_checkpointer
+        await close_checkpointer()
+    except Exception as e:
+        logger.warning(f"关闭 checkpointer 失败: {e}")
     logger.info("Application shutdown complete")
 
 

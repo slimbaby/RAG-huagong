@@ -34,6 +34,7 @@ class SpanType(str, Enum):
     LLM_CALL = "llm_call"
     TOOL_CALL = "tool_call"
     CHECKPOINT = "checkpoint"
+    WORKFLOW_STEP = "workflow_step"
 
 
 @dataclass

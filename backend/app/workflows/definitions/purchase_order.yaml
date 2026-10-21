@@ -1,0 +1,83 @@
+id: purchase_order
+version: 1
+name: 采购下单流程
+description: 从对话中抽取采购单字段，规则校验，人工审批，写库并通知
+
+slots:
+  - name: material_name
+    type: str
+    required: true
+    description: 物料名称
+  - name: quantity
+    type: int
+    required: true
+    description: 采购数量
+  - name: unit_price
+    type: float
+    required: false
+    description: 单价
+  - name: supplier
+    type: str
+    required: true
+    description: 供应商
+  - name: reason
+    type: str
+    required: false
+    description: 采购事由
+
+steps:
+  - id: collect_slots
+    type: slot_extract
+    name: 抽取采购单字段
+    prompt: 从用户描述中抽取采购单的物料、数量、供应商等字段
+
+  - id: check_quantity
+    type: rule_check
+    name: 数量校验
+    rules:
+      - field: quantity
+        op: gt
+        value: 0
+        error: 采购数量必须大于 0
+      - field: quantity
+        op: lte
+        value: 5000
+        error: 单次采购量超过 5000，需走特批流程
+    on_fail: reject
+
+  - id: manager_approve
+    type: human_approval
+    name: 主管审批
+    approver_role: manager
+    approver_hint: 请主管确认采购必要性
+    on_fail: reject
+
+  - id: finance_approve
+    type: human_approval
+    name: 财务审批
+    approver_role: finance
+    approver_hint: 请财务确认预算与付款条件
+    when:
+      field: quantity
+      op: gte
+      value: 100
+    on_fail: reject
+
+  - id: write_order
+    type: side_effect
+    name: 写入采购单
+    handler: purchase.write_order
+
+  - id: notify
+    type: notify
+    name: 通知发起人
+    handler: purchase.notify
+    template: order_created
+
+  - id: done
+    type: end
+    name: 流程完成
+
+  - id: reject
+    type: end
+    name: 流程终止（未通过）

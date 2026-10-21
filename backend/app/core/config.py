@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     LESSON_MIN_CONFIDENCE: float = 0.5         # 置信度门槛，低于此值不写入（防错误教训自我强化）
     LESSON_STORAGE_PATH: str = "./lessons"     # 教训持久化目录
 
+    # 固定流程（Workflow）配置
+    WORKFLOW_ENABLED: bool = True               # 固定流程总开关
+    WORKFLOW_DEFINITIONS_DIR: str = ""          # YAML 流程定义目录，空则用内置目录
+    WORKFLOW_CHECKPOINT_DB: str = "./checkpoints/workflows.db"  # LangGraph checkpoint 库
+    WORKFLOW_APPROVAL_TIMEOUT_HOURS: int = 72   # 审批默认超时
+
     # 认证配置
     AUTH_ENABLED: bool = True
     JWT_SECRET_KEY: str = ""  # 为空时启动自动生成随机密钥（重启后旧 token 全部失效）

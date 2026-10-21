@@ -45,6 +45,7 @@
 | 文档解析 | PyMuPDF / python-docx / pandas | 支持 PDF、Word、Excel、CSV、TXT、Markdown、JSON |
 | 对话记忆 | Redis + Milvus + JSONL | 三层架构：短期(会话列表) + 长期(向量语义召回) + 工作记忆 |
 | 反思教训 | JSONL + 语义分区注入 | LessonStore：系统级(评测归因) + 会话级(自评失败)两级，独立语义位注入 prompt |
+| 固定流程 | YAML + LangGraph StateGraph | 声明式流程定义，interrupt 挂起/断点续跑，AsyncSqliteSaver 持久化 |
 | 评测 | LLM Judge + 自定义指标 | 6 维度评分，质量门禁，自动回归检测 |
 | 数据库 | PostgreSQL 15 + Redis 7 | PostgreSQL 存评测数据，Redis 存会话和任务状态 |
 | 容错 | 熔断器 + 超时 + 重试 | 已实现，可接入 RAG 流程 |
@@ -197,8 +198,15 @@ langgraph-rag/
 │   │   │   ├── reflector.py        # 评测反思归因 → 系统级教训
 │   │   │   └── report.py           # 评测报告
 │   │   ├── tracing/                # 全链路追踪
-│   │   │   ├── tracer.py           # Span 级追踪
-│   │   │   └── checkpointer.py     # 任务检查点
+│   │   │   └── tracer.py           # Span 级追踪
+│   │   ├── workflows/              # 固定流程引擎
+│   │   │   ├── state.py            # WorkflowState + YAML 模型
+│   │   │   ├── loader.py           # YAML 加载 + 版本管理
+│   │   │   ├── nodes.py            # 通用节点实现
+│   │   │   ├── engine.py           # YAML → StateGraph 编译器
+│   │   │   ├── checkpointer.py     # AsyncSqliteSaver 管理
+│   │   │   ├── handlers/           # 业务 handler (写库/通知)
+│   │   │   └── definitions/        # YAML 流程定义
 │   │   ├── resilience/             # 容错机制
 │   │   │   ├── circuit_breaker.py  # 熔断器
 │   │   │   └── resilience_manager.py
@@ -337,6 +345,48 @@ uv sync --frozen --extra dev   # 按锁文件安装
 | GET | `/api/health` | 健康检查 |
 | GET | `/api/tracing/records` | 调用追踪记录 |
 | GET | `/docs` | Swagger API 文档 |
+
+### 固定流程
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/workflows/flows` | 列出流程定义 |
+| GET | `/api/workflows/flows/{flow_id}` | 流程定义详情 |
+| POST | `/api/workflows/start` | 启动流程 |
+| POST | `/api/workflows/runs/{run_id}/resume` | 恢复（审批 / 补信息） |
+| GET | `/api/workflows/runs/{run_id}` | 查询实例状态 |
+| GET | `/api/workflows/runs` | 列出当前用户实例 |
+| GET | `/api/checkpoints/threads` | 列出 checkpoint 线程 |
+
+详见 [docs/04-固定流程设计.md](docs/04-固定流程设计.md)。
+
+## 固定流程（Workflow）
+
+支持把"公司固定流程"（采购下单、生产工单、审批流等）接入系统。核心特性：
+
+- **声明式定义**：流程写在 YAML 里，新增流程不改代码
+- **有状态可挂起**：`interrupt()` 挂起等人审批，`Command(resume=...)` 断点续跑，前面的步骤不重跑
+- **持久化**：LangGraph 官方 `AsyncSqliteSaver`，状态在 checkpoint 里而非内存，进程重启也能恢复
+- **能力复用**：LLM / 检索 / 权限 / tracer / 教训全部复用 RAG 侧单例
+
+```yaml
+id: purchase_order
+version: 1
+name: 采购下单流程
+slots:
+  - {name: material_name, type: str, required: true}
+  - {name: quantity, type: int, required: true}
+steps:
+  - {id: collect, type: slot_extract}
+  - {id: check, type: rule_check, rules: [{field: quantity, op: lte, value: 5000, error: 超限}], on_fail: reject}
+  - {id: approve, type: human_approval, approver_role: manager, on_fail: reject}
+  - {id: write_order, type: side_effect, handler: purchase.write_order}
+  - {id: notify, type: notify, handler: purchase.notify}
+  - {id: done, type: end}
+  - {id: reject, type: end}
+```
+
+节点类型：`slot_extract` / `rule_check` / `branch` / `human_approval` / `llm` / `side_effect` / `notify` / `end`。其中只有 `side_effect` 与 `notify` 需要写 Python，其余由引擎通用实现。
 
 ## 评测体系
 

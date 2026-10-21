@@ -69,13 +69,6 @@ def get_deps():
             except Exception:
                 pass
 
-            checkpointer = None
-            try:
-                from ..tracing.checkpointer import Checkpointer
-                checkpointer = Checkpointer(storage_path="./checkpoints")
-            except Exception:
-                pass
-
             llm_client = None
             try:
                 llm_client = LLMService(
@@ -167,7 +160,6 @@ def get_deps():
                 "query_rewriter": rewriter,
                 "citation_service": citation,
                 "tracer": tracer,
-                "checkpointer": checkpointer,
                 "hybrid_store": store,
                 "llm_client": llm_client,
                 "embedding_service": embedding_service,
@@ -203,6 +195,16 @@ def get_deps():
             logger.error(f"依赖初始化失败: {e}")
             _deps = None
     return _deps or {}
+
+
+def init_workflow_deps_provider() -> None:
+    """把本模块的 deps 提供给 workflow 引擎
+
+    workflow 的 LLM client / tracer / 检索能力全部复用 RAG 侧的单例，
+    不另建一套连接池与模型客户端。
+    """
+    from ..workflows.engine import set_deps_provider
+    set_deps_provider(get_deps)
 
 
 def get_rag_graph():
