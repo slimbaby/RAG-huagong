@@ -8,9 +8,11 @@ Workflow 通用节点实现
 只有 side_effect / notify 需要 Python 实现，注册在 HANDLERS 扩展表里。
 """
 
+import calendar
 import json
 import logging
 import re
+from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 from .state import ConditionDef, RuleDef, StepDef, WorkflowState
@@ -112,10 +114,100 @@ def eval_rules(rules: List[RuleDef], state: WorkflowState) -> List[str]:
 
 # ── 槽位类型转换 ──
 
+def _shift_month(base: date, months: int) -> tuple:
+    """把基准日期往后推 N 个月，返回 (年, 月)"""
+    total = base.month - 1 + months
+    return base.year + total // 12, total % 12 + 1
+
+
+def normalize_date(raw: Any, today: Optional[date] = None) -> Any:
+    """把中文相对日期归一化为 YYYY-MM-DD
+
+    「11.30号」「11月30日」按"当年最接近的该日期"处理：若已过则取明年。
+    无法解析时返回原值，交由 rule_check 报错。
+    """
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, datetime):
+        return raw.date().isoformat()
+    if isinstance(raw, date):
+        return raw.isoformat()
+
+    base = today or datetime.now().date()
+    text = str(raw).strip()
+
+    # 已是标准格式
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+    if re.fullmatch(r"\d{4}/\d{1,2}/\d{1,2}", text):
+        y, m, d = (int(x) for x in text.split("/"))
+        return date(y, m, d).isoformat()
+
+    # 「下个月底」/「本月底」等先处理
+    if "下下个月底" in text:
+        y, m = _shift_month(base, 2)
+        return date(y, m, calendar.monthrange(y, m)[1]).isoformat()
+    if "下个月底" in text or "下月月底" in text:
+        y, m = _shift_month(base, 1)
+        return date(y, m, calendar.monthrange(y, m)[1]).isoformat()
+    if "月底" in text:
+        y, m = _shift_month(base, 1 if "下月" in text else 0)
+        return date(y, m, calendar.monthrange(y, m)[1]).isoformat()
+
+    # 「X月Y日」「X.Y」「X-Y」「X/X」，含「下个月15号」这类带月份限定的写法
+    offset_months = 0
+    if "下下个月" in text:          # 必须先判，否则「下下个月」会被「下个月」命中
+        offset_months = 2
+    elif "下个月" in text or "下月" in text:
+        offset_months = 1
+    elif "这个月" in text or "本月" in text or "当月" in text:
+        offset_months = 0
+
+    # 「今天」「明天」「后天」
+    rel = {"今天": 0, "今日": 0, "明天": 1, "明日": 1, "后天": 2, "大后天": 3}
+    for word, delta in rel.items():
+        if word in text:
+            return (base + timedelta(days=delta)).isoformat()
+
+    # 年月由「下个月/本月」决定，日号单独匹配：「下个月15号」
+    month: Optional[int] = None
+    day: Optional[int] = None
+
+    m = re.search(r"(\d{1,2})\s*[.月/\-]\s*(\d{1,2})", text)
+    if m:
+        month, day = int(m.group(1)), int(m.group(2))
+    elif offset_months:
+        m = re.search(r"(?<!\d)(\d{1,2})\s*[号日]", text)
+        if m:
+            month, day = base.month, int(m.group(1))
+
+    if month is None or day is None:
+        return raw
+
+    year = base.year
+    if offset_months:
+        year, month = _shift_month(base, offset_months)
+
+    try:
+        candidate = date(year, month, day)
+    except ValueError:
+        return raw
+
+    # 无月份限定且已过去，视为明年
+    if not offset_months and candidate < base:
+        try:
+            candidate = date(year + 1, month, day)
+        except ValueError:
+            return raw
+    return candidate.isoformat()
+
+
 def cast_value(raw: Any, target_type: str) -> Any:
     """按槽位声明类型转换；转换失败返回原值（由校验环节报错）"""
     if raw is None:
         return None
+    if target_type == "date":
+        return normalize_date(raw)
     try:
         if target_type == "int":
             return int(float(raw))

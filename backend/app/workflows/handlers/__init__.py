@@ -11,8 +11,12 @@
 import logging
 from typing import Any, Dict
 
-from ..workflows.nodes import register_handler
-from ..workflows.state import StepDef, WorkflowState
+from ..nodes import register_handler
+from ..state import StepDef, WorkflowState
+from . import erp
+from .order_handlers import nightly_scheduling
+
+__all__ = ["write_order", "notify", "nightly_scheduling", "erp", "register_builtin_handlers"]
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +89,18 @@ async def notify(state: WorkflowState, step: StepDef) -> Dict[str, Any]:
 
 def register_builtin_handlers() -> None:
     """注册内置 handler（应用启动时调用一次）"""
+    from .order_handlers import (
+        notify_order_received,
+        notify_order_rejected,
+        write_pending_order,
+    )
+
     register_handler("purchase.write_order", write_order)
     register_handler("purchase.notify", notify)
+
+    # 甲烷下单流程（Excel 模拟 ERP，接真 ERP 后替换 erp.py 实现即可）
+    register_handler("erp.write_pending_order", write_pending_order)
+    register_handler("erp.notify_order_received", notify_order_received)
+    register_handler("erp.notify_order_rejected", notify_order_rejected)
+
     logger.info("内置 workflow handler 注册完成")

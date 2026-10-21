@@ -5,6 +5,7 @@ LangGraph节点函数 - RAG流程的各个步骤
 from typing import Dict, Any, List, Optional
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import re
@@ -317,7 +318,11 @@ async def _chat_with_tools(llm_client, messages, tools_schema, tool_registry, ma
                 output = json.dumps({"error": f"未知工具 {fn_name}"}, ensure_ascii=False)
             else:
                 try:
-                    output = fn(**args)
+                    # 工具可能是 async（如 workflow 下单），也可能是普通同步函数
+                    if inspect.iscoroutinefunction(fn):
+                        output = await fn(**args)
+                    else:
+                        output = fn(**args)
                 except Exception as e:
                     output = json.dumps({"error": str(e)}, ensure_ascii=False)
             logger.info(f"[tool_loop] {fn_name}({args}) -> {str(output)[:120]}")

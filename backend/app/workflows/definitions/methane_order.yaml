@@ -1,0 +1,92 @@
+id: methane_order
+version: 1
+name: 甲烷产品下单流程
+description: 识别下单意图 → 抽取订单字段 → 校验 → 写入 ERP 待排产池 → 通知用户
+
+slots:
+  - name: product
+    type: str
+    required: true
+    description: 产品名称，如 甲烷/乙烯/丙烯
+  - name: volume_ton
+    type: float
+    required: true
+    description: 数量，单位吨
+  - name: delivery_date
+    type: date
+    required: true
+    description: 交期，统一归一化为 YYYY-MM-DD
+  - name: customer
+    type: str
+    required: true
+    description: 客户名称
+  - name: contact
+    type: str
+    required: false
+    description: 联系人
+  - name: remark
+    type: str
+    required: false
+    description: 备注
+
+steps:
+  - id: collect
+    type: slot_extract
+    name: 抽取订单字段
+    prompt: |
+      从用户描述中抽取产品订单信息。
+      注意：交期必须换算成 YYYY-MM-DD 格式，例如「11.30号」「下个月底」
+      「下月15号」都要换算成具体日期；「明天」换算成明天。
+
+  - id: check_order
+    type: rule_check
+    name: 订单校验
+    rules:
+      - field: volume_ton
+        op: gt
+        value: 0
+        error: 订单数量必须大于 0 吨
+      - field: volume_ton
+        op: lte
+        value: 200
+        error: 单次下单超过 200 吨，请走大宗贸易流程
+      - field: product
+        op: contains
+        value: ""
+        error: 请明确说明产品名称
+      - field: customer
+        op: contains
+        value: ""
+        error: 请提供客户名称
+    on_fail: reject
+
+  - id: credit_check
+    type: llm
+    name: 大客户信用评估
+    output_key: credit_note
+    system_prompt: |
+      你是一名化工销售信用专员。根据订单数量与客户名，
+      判断该订单是否需要人工介入审批，只输出一句话结论。
+    when:
+      field: volume_ton
+      op: gte
+      value: 50
+
+  - id: write_erp
+    type: side_effect
+    name: 写入 ERP 待排产池
+    handler: erp.write_pending_order
+
+  - id: notify
+    type: notify
+    name: 通知用户已接单
+    handler: erp.notify_order_received
+    template: order_received
+
+  - id: done
+    type: end
+    name: 下单完成
+
+  - id: reject
+    type: end
+    name: 校验未通过，流程终止

@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     WORKFLOW_DEFINITIONS_DIR: str = ""          # YAML 流程定义目录，空则用内置目录
     WORKFLOW_CHECKPOINT_DB: str = "./checkpoints/workflows.db"  # LangGraph checkpoint 库
     WORKFLOW_APPROVAL_TIMEOUT_HOURS: int = 72   # 审批默认超时
+    ERP_DATA_DIR: str = "./data"                # ERP 模拟数据目录（接真ERP 后废弃）
 
     # 认证配置
     AUTH_ENABLED: bool = True

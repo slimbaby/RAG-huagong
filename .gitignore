@@ -54,3 +54,7 @@ docker/data/
 *.tmp
 *.bak
 .pytest_cache/
+
+# ERP 模拟数据（Excel 模拟层产生，接真 ERP 后可删）
+ERP待排产池.xlsx
+生产计划.xlsx

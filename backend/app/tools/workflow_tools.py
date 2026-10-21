@@ -1,0 +1,172 @@
+"""
+下单工具 —— 让 LLM 识别出「下单意图」后启动 workflow
+
+设计要点：
+1. 只在**明确下单**时触发。查库存、查订单状态、问价格这类只读请求
+   不应该走这里，靠工具描述约束 + 槽位完整度后置校验双重把关。
+2. 启动流程走的是 workflow 引擎（有checkpoint、能追问、能挂起），
+   不是一次性的函数调用 —— 所以这里返回的可能是「还需补充信息」。
+3. 引擎侧的 LLM 客户端与RAG 侧共用单例，不额外占用资源。
+"""
+
+import json
+import logging
+from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
+
+# 明确是只读查询的说法，命中则拒绝启动流程。
+# 这是防误触发的**兜底**——主要靠工具描述引导 LLM 判断，
+# 这里是第二道闸：万一 LLM 仍然误调了，不至于真去建单。
+_READ_ONLY_HINTS = [
+    "查一下", "查查", "查询", "看看", "查下", "多少", "有没有货", "库存",
+    "什么状态", "到哪了", "进度", "价格", "多少钱", "报价", "是什么",
+]
+
+
+def _looks_like_read_only(user_input: str) -> bool:
+    text = user_input or ""
+    return any(h in text for h in _READ_ONLY_HINTS)
+
+
+async def tool_create_order(
+    user_input: str,
+    flow_id: str = "methane_order",
+    version: Any = None,
+) -> str:
+    """启动下单流程。user_input: 用户的原始下单请求原文。"""
+    if not user_input or not user_input.strip():
+        return json.dumps({"error": "user_input 不能为空"}, ensure_ascii=False)
+
+    # 后置校验一：只读请求直接拒绝，避免建错单
+    if _looks_like_read_only(user_input):
+        logger.info(f"[create_order] 疑似只读查询，不启动流程: {user_input[:40]}")
+        return json.dumps(
+            {"started": False, "reason": "这是查询类请求，不需要走下单流程"},
+            ensure_ascii=False,
+        )
+
+    try:
+        from ..workflows.loader import get_flow_registry
+        from ..workflows.engine import get_workflow_engine, new_run_id
+        from ..workflows.checkpointer import get_checkpointer
+    except Exception as e:
+        logger.error(f"[create_order] workflow 模块不可用: {e}")
+        return json.dumps({"error": f"流程引擎不可用: {e}"}, ensure_ascii=False)
+
+    try:
+        registry = get_flow_registry()
+        flow = registry.get(flow_id, version)
+        if flow is None:
+            return json.dumps({"error": f"流程不存在: {flow_id}"}, ensure_ascii=False)
+
+        checkpointer = await get_checkpointer()
+        graph = get_workflow_engine().get_graph(
+            flow.id, flow.version, checkpointer=checkpointer
+        )
+        if graph is None:
+            return json.dumps({"error": f"流程图编译失败: {flow_id}"}, ensure_ascii=False)
+
+        run_id = new_run_id()
+        config = {"configurable": {"thread_id": run_id}}
+        initial = {
+            "run_id": run_id,
+            "flow_id": flow.id,
+            "flow_version": flow.version,
+            "slots": {},
+            "step_results": {},
+            "current_step": flow.steps[0].id,
+            "goto": None,
+            "pending_approval": None,
+            "status": "running",
+            "error": None,
+            "metadata": {"source": "create_order_tool"},
+            "user_input": user_input.strip(),
+            "pending_question": None,
+        }
+
+        result = await graph.ainvoke(initial, config=config)
+        # interrupt 载荷不在 ainvoke 返回值里，要从快照的 pending_writes 取
+        snap = await graph.aget_state(config)
+        from ..workflows.checkpointer import extract_interrupt_payloads
+        interrupts = extract_interrupt_payloads(snap)
+    except Exception as e:
+        logger.exception(f"[create_order] 启动流程失败 {flow_id}")
+        return json.dumps({"error": f"下单流程启动失败: {e}"}, ensure_ascii=False)
+
+    return _render_result(result, run_id, flow_id, interrupts)
+
+
+def _render_result(
+    result: Dict[str, Any],
+    run_id: str,
+    flow_id: str,
+    interrupts: list = None,
+) -> str:
+    """把 workflow 结果整理成给 LLM 看的结构"""
+    slots = result.get("slots", {}) or {}
+    step_results = result.get("step_results", {}) or {}
+    interrupts = interrupts or []
+    status = result.get("status", "")
+
+    payload: Dict[str, Any] = {
+        "run_id": run_id,
+        "flow_id": flow_id,
+        "status": status,
+        "extracted": slots,
+    }
+
+    if status == "completed":
+        write_res = step_results.get("write_pending_order", {}) or {}
+        payload["order_no"] = write_res.get("order_no")
+        payload["message"] = (
+            f"下单成功，单号 {write_res.get('order_no')}，"
+            f"已进入待排产池，等待排产。"
+        )
+        return json.dumps(payload, ensure_ascii=False)
+
+    if status == "failed":
+        payload["message"] = f"下单未通过校验：{result.get('error', '原因未知')}"
+        return json.dumps(payload, ensure_ascii=False)
+
+    # 挂起中：需要追问用户
+    question = result.get("pending_question")
+    if not question and interrupts:
+        question = interrupts[0].get("question") if isinstance(interrupts[0], dict) else None
+    payload["need_more_info"] = True
+    payload["question"] = question or "请补充订单信息"
+    payload["message"] = (
+        "订单信息还不完整，需要向用户追问。"
+        f"请用自然语言提出这个问题：{payload['question']}"
+    )
+    return json.dumps(payload, ensure_ascii=False)
+
+
+# ── 工具 schema（注册到 LLM 的 function calling） ──
+
+CREATE_ORDER_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "create_order",
+        "description": (
+            "提交产品订单到ERP 待排产池。当用户明确表达下单、订货、采购、"
+            "要货、发货等意图时使用，例如「下一个5吨甲烷订单」「帮我订20吨乙烯」。"
+            "注意：查询订单状态、查库存、问价格、问交期等只读请求不要使用本工具。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "user_input": {
+                    "type": "string",
+                    "description": "用户的原始下单请求原文，完整传入，不要改写",
+                },
+                "flow_id": {
+                    "type": "string",
+                    "description": "流程ID。化工产品下单填 methane_order",
+                    "default": "methane_order",
+                },
+            },
+            "required": ["user_input"],
+        },
+    },
+}
