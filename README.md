@@ -202,11 +202,11 @@ langgraph-rag/
 │   │   ├── workflows/              # 固定流程引擎
 │   │   │   ├── state.py            # WorkflowState + YAML 模型
 │   │   │   ├── loader.py           # YAML 加载 + 版本管理
-│   │   │   ├── nodes.py            # 通用节点实现
+│   │   │   ├── nodes.py            # 通用节点实现 + 日期归一化
 │   │   │   ├── engine.py           # YAML → StateGraph 编译器
 │   │   │   ├── checkpointer.py     # AsyncSqliteSaver 管理
-│   │   │   ├── handlers/           # 业务 handler (写库/通知)
-│   │   │   └── definitions/        # YAML 流程定义
+│   │   │   ├── handlers/           # 业务 handler (写库/通知) + ERP 模拟层
+│   │   │   └── definitions/        # YAML 流程定义 + 新增指南
 │   │   ├── resilience/             # 容错机制
 │   │   │   ├── circuit_breaker.py  # 熔断器
 │   │   │   └── resilience_manager.py
@@ -387,6 +387,25 @@ steps:
 ```
 
 节点类型：`slot_extract` / `rule_check` / `branch` / `human_approval` / `llm` / `side_effect` / `notify` / `end`。其中只有 `side_effect` 与 `notify` 需要写 Python，其余由引擎通用实现。
+
+槽位类型：`str` / `int` / `float` / `bool` / `date`。`date` 会自动把「11.30号」「下个月底」「下月15号」「明天」等中文相对日期归一化为 `YYYY-MM-DD`。
+
+### 聊天里直接下单
+
+`create_order` / `resume_order` 已注册为 function calling 工具，**不需要新前端页面**——在对话框里聊，LLM 识别出下单意图就自动走流程：
+
+```
+用户："下一个 11.30 号发货的体积 5 吨的甲烷订单"
+  ↓ LLM 识别下单意图 → create_order → 抽槽位 → 缺客户则追问
+  ↓ "还需要补充以下信息：customer。"
+用户："客户是 X 化工厂"
+  ↓ resume_order → 校验 → 写 ERP 待排产池 → 通知
+  ↓ 单号 MO202610220001
+```
+
+**新增流程**：把 YAML 放进 `backend/app/workflows/definitions/`，重启自动加载。详见 [definitions/README.md](backend/app/workflows/definitions/README.md)。
+
+**边界**：workflow 只做「接单并落库」，「等 20:00 排产」是**定时任务**（`nightly_scheduling()`）——挂起是等人不是等时间，把时间等待塞进流程会让实例在 checkpoint 里躺十几个小时。
 
 ## 评测体系
 
