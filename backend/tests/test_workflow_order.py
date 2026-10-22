@@ -64,6 +64,18 @@ def test_cast_value_supports_date_type():
 # ── ERP 模拟层 ──
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _close_global_checkpointer():
+    """每个用例后关闭全局 checkpointer 单例
+
+    工具函数（tool_resume_order 等）内部调 get_checkpointer() 会创建**全局单例**，
+    用例自己的 fixture 管不到。不关的话 aiosqlite 的后台线程不退出，pytest 会挂住。
+    """
+    yield
+    from app.workflows.checkpointer import close_checkpointer
+    await close_checkpointer()
+
+
 @pytest.fixture
 def erp_dir(monkeypatch):
     """把ERP 数据目录指到临时目录，避免污染项目 data/"""
@@ -411,3 +423,131 @@ def test_create_order_schema_mentions_read_only_exclusion():
     desc = CREATE_ORDER_SCHEMA["function"]["description"]
     assert "不要使用" in desc
     assert "只读" in desc
+
+# ── 聊天场景：function calling 闭环 ──
+
+
+class _ScriptedLLM:
+    """按脚本演化的 function calling 模型，模拟真实多轮行为"""
+
+    def __init__(self):
+        self.step = 0
+        self.run_id = None
+        self.seen_tools = []
+
+    async def chat_with_tools(self, messages, tools=None, **kw):
+        self.step += 1
+        self.seen_tools = [t["function"]["name"] for t in (tools or [])]
+        tool_results = [m for m in messages if m.get("role") == "tool"]
+        last = json.loads(tool_results[-1]["content"]) if tool_results else None
+
+        if self.step == 1:
+            return {
+                "text": "",
+                "tool_calls": [{
+                    "id": "c1",
+                    "function": {"name": "create_order", "arguments": json.dumps({
+                        "user_input": "帮我下一个11.30号发货的体积5吨的甲烷订单",
+                        "flow_id": "methane_order",
+                    }, ensure_ascii=False)},
+                }],
+                "usage": {},
+            }
+
+        if self.step == 2 and last and last.get("need_more_info"):
+            self.run_id = last.get("run_id")
+            return {
+                "text": "",
+                "tool_calls": [{
+                    "id": "c2",
+                    "function": {"name": "resume_order", "arguments": json.dumps({
+                        "run_id": self.run_id, "user_input": "客户是X化工厂",
+                    }, ensure_ascii=False)},
+                }],
+                "usage": {},
+            }
+
+        return {"text": "订单已提交。", "tool_calls": [], "usage": {}}
+
+    async def generate(self, prompt, system_prompt=None, **kw):
+        if "可用字段定义" in prompt:
+            if "X化工厂" in prompt:
+                return {"content": '{"customer":"X化工厂"}'}
+            return {"content": '{"product":"甲烷","volume_ton":5,"delivery_date":"11.30号"}'}
+        return {"content": "常规订单。"}
+
+
+@pytest.mark.asyncio
+async def test_chat_tool_calling_closes_the_loop(erp_dir, order_checkpointer, monkeypatch):
+    """聊天时：识别下单意图 → 追问 → 用户补充 → 写入 Excel
+
+    这是「接入模型后能不能自动下单」的关键路径。
+    """
+    from app.agents.nodes import _chat_with_tools
+    from app.tools.agent_tools import TOOL_REGISTRY, TOOLS_SCHEMA
+    from app.workflows.engine import set_deps_provider
+    from app.workflows.handlers import erp as erp_mod, register_builtin_handlers
+    from app.workflows.loader import FlowRegistry
+
+    register_builtin_handlers()
+    llm = _ScriptedLLM()
+    set_deps_provider(lambda: {"llm_client": llm})
+    FlowRegistry().load(force=True)
+
+    result = await _chat_with_tools(
+        llm,
+        [{"role": "user", "content": "帮我下一个11.30号发货的体积5吨的甲烷订单"}],
+        TOOLS_SCHEMA,
+        TOOL_REGISTRY,
+        max_rounds=4,
+    )
+
+    names = [t["name"] for t in result["tool_trace"]]
+    assert names == ["create_order", "resume_order"], f"工具调用序列不对: {names}"
+
+    # tool_trace 里只存了 200 字符预览，JSON 会被截断，这里断言预览内可见的部分
+    first_preview = result["tool_trace"][0]["output_preview"]
+    assert "awaiting_input" in first_preview
+    assert "need_more_info" in first_preview
+    assert "甲烷" in first_preview, "应带上已抽到的字段，让 LLM 知道进度"
+    assert "run_id" in first_preview, "必须回传 run_id，否则 LLM 无法 resume"
+
+    second_preview = result["tool_trace"][1]["output_preview"]
+    assert "completed" in second_preview
+    assert "order_no" in second_preview
+
+    # Excel 真的有单
+    rows = erp_mod.read_pending()
+    assert len(rows) == 1
+    assert rows[0]["产品"] == "甲烷"
+    assert rows[0]["数量(吨)"] == 5
+    assert rows[0]["交期"] == "2026-11-30"
+    assert rows[0]["客户"] == "X化工厂"
+    assert rows[0]["状态"] == "pending"
+
+
+def test_both_order_tools_registered():
+    """create_order 和 resume_order 都必须在工具表里，否则追问无法闭环"""
+    from app.tools.agent_tools import TOOL_REGISTRY, TOOLS_SCHEMA
+
+    names = [t["function"]["name"] for t in TOOLS_SCHEMA]
+    assert "create_order" in names
+    assert "resume_order" in names
+    assert "create_order" in TOOL_REGISTRY
+    assert "resume_order" in TOOL_REGISTRY
+
+
+@pytest.mark.asyncio
+async def test_resume_order_rejects_unknown_run():
+    from app.tools.workflow_tools import tool_resume_order
+
+    payload = json.loads(await tool_resume_order("no-such-run", user_input="客户是X"))
+    assert "error" in payload
+
+
+@pytest.mark.asyncio
+async def test_resume_order_requires_payload():
+    from app.tools.workflow_tools import tool_resume_order
+
+    payload = json.loads(await tool_resume_order("some-run"))
+    assert "error" in payload

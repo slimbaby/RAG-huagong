@@ -263,14 +263,23 @@ if _HAS_MANUFACTURING:
 # ── 固定流程工具（create_order） ──
 # 独立 try 包裹：workflow 模块不可用时不至于让整个 tools 模块导入失败
 try:
-    from .workflow_tools import CREATE_ORDER_SCHEMA, tool_create_order
+    from .workflow_tools import (
+        CREATE_ORDER_SCHEMA,
+        RESUME_ORDER_SCHEMA,
+        tool_create_order,
+        tool_resume_order,
+    )
 
     TOOLS_SCHEMA.append(CREATE_ORDER_SCHEMA)
+    TOOLS_SCHEMA.append(RESUME_ORDER_SCHEMA)
     TOOL_REGISTRY["create_order"] = tool_create_order
+    TOOL_REGISTRY["resume_order"] = tool_resume_order
     TOOLS_SYSTEM_HINT += (
         "\ncreate_order(提交产品订单到ERP待排产池)：当用户明确表达下单、订货、"
         "采购、要货意图时使用（如「下一个5吨甲烷订单」「帮我订20吨乙烯」）。"
         "查询订单状态、查库存、问价格、问交期等只读请求不要使用它。"
+        "\nresume_order(继续挂起的下单流程)：当 create_order 返回 need_more_info "
+        "时，用它的 run_id 把用户补充的内容继续传进来。"
     )
     _HAS_WORKFLOW = True
 except ImportError:

@@ -97,6 +97,75 @@ async def tool_create_order(
     return _render_result(result, run_id, flow_id, interrupts)
 
 
+async def tool_resume_order(
+    run_id: str,
+    user_input: str = "",
+    approved: Any = None,
+    slots: Any = None,
+) -> str:
+    """恢复一个挂起的下单流程。
+
+    用户在对话里补充了信息（比如"客户是X化工厂"）时调用。
+    run_id 从上一次 create_order 的返回值里取。
+    """
+    if not run_id or not run_id.strip():
+        return json.dumps({"error": "run_id 不能为空"}, ensure_ascii=False)
+
+    try:
+        from ..workflows.loader import get_flow_registry
+        from ..workflows.engine import get_workflow_engine
+        from ..workflows.checkpointer import get_checkpointer, extract_interrupt_payloads
+        from langgraph.types import Command
+    except Exception as e:
+        logger.error(f"[resume_order] workflow 模块不可用: {e}")
+        return json.dumps({"error": f"流程引擎不可用: {e}"}, ensure_ascii=False)
+
+    payload: Dict[str, Any] = {}
+    if slots:
+        payload["slots"] = slots
+    if user_input:
+        payload["user_input"] = user_input
+    if approved is not None:
+        payload["approved"] = approved
+    if not payload:
+        return json.dumps({"error": "需要提供 user_input 或 slots 或 approved"}, ensure_ascii=False)
+
+    try:
+        checkpointer = await get_checkpointer()
+        engine = get_workflow_engine()
+        registry = get_flow_registry()
+        config = {"configurable": {"thread_id": run_id}}
+
+        # 从 checkpoint 反查这个 run 属于哪个 flow
+        graph = None
+        flow_id = ""
+        for meta in registry.list_flows():
+            candidate = registry.get(meta["id"], meta["version"])
+            if candidate is None:
+                continue
+            g = engine.get_graph(candidate.id, candidate.version, checkpointer=checkpointer)
+            if g is None:
+                continue
+            snap = await g.aget_state(config)
+            values = getattr(snap, "values", None) or {}
+            if values.get("run_id") == run_id:
+                graph = g
+                flow_id = candidate.id
+                break
+
+        if graph is None:
+            return json.dumps({"error": f"流程实例不存在或已过期: {run_id}"}, ensure_ascii=False)
+
+        result = await graph.ainvoke(Command(resume=payload), config=config)
+        snap = await graph.aget_state(config)
+        interrupts = extract_interrupt_payloads(snap)
+    except Exception as e:
+        logger.exception(f"[resume_order] 恢复流程失败 run_id={run_id}")
+        return json.dumps({"error": f"恢复失败: {e}"}, ensure_ascii=False)
+
+    return _render_result(result, run_id, flow_id, interrupts)
+
+
 def _render_result(
     result: Dict[str, Any],
     run_id: str,
@@ -117,7 +186,7 @@ def _render_result(
     }
 
     if status == "completed":
-        write_res = step_results.get("write_pending_order", {}) or {}
+        write_res = step_results.get("write_erp") or step_results.get("write_pending_order") or {}
         payload["order_no"] = write_res.get("order_no")
         payload["message"] = (
             f"下单成功，单号 {write_res.get('order_no')}，"
@@ -135,6 +204,10 @@ def _render_result(
         question = interrupts[0].get("question") if isinstance(interrupts[0], dict) else None
     payload["need_more_info"] = True
     payload["question"] = question or "请补充订单信息"
+    payload["next_action"] = (
+        f"用 resume_order 工具继续，run_id={run_id}，"
+        f"把用户补充的内容放进 user_input"
+    )
     payload["message"] = (
         "订单信息还不完整，需要向用户追问。"
         f"请用自然语言提出这个问题：{payload['question']}"
@@ -167,6 +240,41 @@ CREATE_ORDER_SCHEMA = {
                 },
             },
             "required": ["user_input"],
+        },
+    },
+}
+
+RESUME_ORDER_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "resume_order",
+        "description": (
+            "继续一个挂起的下单流程。当系统提示订单信息不完整、需要补充"
+            "（如缺客户、交期、数量）时，用上次 create_order 返回的 run_id "
+            "调用本工具，把用户刚补充的内容传进来。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "type": "string",
+                    "description": "待排产订单的 run_id，来自 create_order 的返回值",
+                },
+                "user_input": {
+                    "type": "string",
+                    "description": "用户补充的原始信息原文，如『客户是X化工厂』",
+                },
+                "slots": {
+                    "type": "object",
+                    "description": "结构化的槽位补充，如 {\"customer\": \"X化工厂\"}",
+                    "additionalProperties": True,
+                },
+                "approved": {
+                    "type": "boolean",
+                    "description": "审批场景传true 表示通过，false 表示驳回",
+                },
+            },
+            "required": ["run_id"],
         },
     },
 }
