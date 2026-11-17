@@ -32,22 +32,23 @@
 
 | 模块 | 技术 | 说明 |
 |------|------|------|
-| Web 框架 | FastAPI + Uvicorn | 异步 REST API，支持 SSE 流式响应 |
-| Agent 编排 | LangGraph | StateGraph 状态机，条件路由（知识库问答 / 通用问答） |
-| LLM | OpenAI SDK | 对接小米 mimo-72b 模型，支持 function calling 和多模态 |
+| 语言 | Python 3.10 | `pyproject.toml` 下限 `>=3.10`，镜像 `python:3.10-slim`，依赖 `uv.lock` 锁定 |
+| Web 框架 | FastAPI + Uvicorn | 异步 REST API，支持 SSE 流式响应（token 级 + 节点级双粒度） |
+| Agent 编排 | LangGraph 1.2.11 | `StateGraph(RAGState)` 状态机，条件路由（知识库问答 / 通用问答） |
+| LLM | OpenAI SDK（AsyncOpenAI） | 双档模型：premium `mimo-72b` / standard `mimo-v2.5-pro`，支持 function calling 和多模态 |
 | Embedding | sentence-transformers | BAAI/bge-base-zh-v1.5，768 维向量 |
 | 向量数据库 | Milvus 2.4 | HNSW 索引，COSINE 相似度 |
-| 关键词检索 | BM25 | jieba 中分词，pickle 持久化，倒排索引 |
-| 混合检索 | Milvus + BM25 并行 | 支持 RRF / 加权融合 / Max 三种融合策略 |
-| 重排序 | CrossEncoder | BAAI/bge-reranker-v2-m3 交叉编码器 |
+| 关键词检索 | BM25 | jieba 分词，pickle 持久化，倒排索引（自研，不依赖 ES） |
+| 混合检索 | Milvus + BM25 并行 | 两路各取 top_k×2，RRF 融合去重后截 top_k |
+| 重排序 | CrossEncoder | BAAI/bge-reranker-base 交叉编码器 |
 | 查询优化 | 规则 + LLM | 口语化纠正、意图分类、关键词提取、LLM 改写与扩展 |
 | OCR | PaddleOCR + Tesseract | 双引擎，PaddleOCR 优先，Tesseract 兜底 |
 | 文档解析 | PyMuPDF / python-docx / pandas | 支持 PDF、Word、Excel、CSV、TXT、Markdown、JSON |
 | 对话记忆 | Redis + Milvus + JSONL | 三层架构：短期(会话列表) + 长期(向量语义召回) + 工作记忆 |
 | 反思教训 | JSONL + 语义分区注入 | LessonStore：系统级(评测归因) + 会话级(自评失败)两级，独立语义位注入 prompt |
 | 固定流程 | YAML + LangGraph StateGraph | 声明式流程定义，interrupt 挂起/断点续跑，AsyncSqliteSaver 持久化 |
-| 评测 | LLM Judge + 自定义指标 | 6 维度评分，质量门禁，自动回归检测 |
-| 数据库 | PostgreSQL 15 + Redis 7 | PostgreSQL 存评测数据，Redis 存会话和任务状态 |
+| 评测 | LLM Judge + 自定义指标 + RAGAS | 6 维度评分 + RAGAS 三指标(faithfulness/context_precision/context_recall)，质量门禁，自动回归检测 |
+| 数据库 | PostgreSQL 15 + Redis 7 | PostgreSQL 存评测数据（asyncpg 连接池），Redis 存会话和任务状态 |
 | 容错 | 熔断器 + 超时 + 重试 | 已实现，可接入 RAG 流程 |
 
 ### 前端
@@ -64,7 +65,7 @@
 
 | 组件 | 技术 |
 |------|------|
-| 容器编排 | Docker Compose (8 服务) |
+| 容器编排 | Docker Compose (9 服务) |
 | K8s | Kustomize 配置，含 CronJob 定时评测 |
 | 向量库 | Milvus 2.4.17 |
 | 对象存储 | MinIO (RAGFlow 依赖) |
@@ -96,7 +97,7 @@
   │  混合检索 ──┐                                  │
   │    │  Milvus 向量搜索 (top 20)  ──┤            │
   │    │  BM25 关键词搜索 (top 20)  ──┤ RRF 融合   │
-  │    ▼                             ┘            │
+  │    ▼                             ┘ 截 top 10  │
   │  重排序 (CrossEncoder, top 5)                  │
   │    │                                          │
   │    ▼                                          │
@@ -238,7 +239,7 @@ langgraph-rag/
 │   ├── Dockerfile
 │   └── package.json
 ├── docker/
-│   └── docker-compose.yml          # 8 服务容器编排
+│   └── docker-compose.yml          # 9 服务容器编排
 ├── k8s/                            # Kubernetes 部署配置
 ├── config/
 │   └── resilience.yaml             # 容错配置
@@ -285,7 +286,9 @@ docker compose up -d
 | `PREMIUM_MODEL_API_KEY` | LLM API Key | - |
 | `PREMIUM_MODEL_API_BASE_URL` | LLM API 地址 | `https://api.xiaomi.com/v1` |
 | `PREMIUM_MODEL_NAME` | 模型名称 | `mimo-72b` |
+| `STANDARD_MODEL_NAME` | 标准档模型 | `mimo-v2.5-pro` |
 | `EMBEDDING_MODEL_NAME` | Embedding 模型 | `BAAI/bge-base-zh-v1.5` |
+| `RERANKER_MODEL_NAME` | 重排序模型 | `BAAI/bge-reranker-base` |
 | `EMBEDDING_DIMENSION` | 向量维度 | `768` |
 | `MILVUS_HOST` | Milvus 地址 | `localhost` |
 | `POSTGRES_HOST` | PostgreSQL 地址 | `localhost` |
@@ -413,12 +416,14 @@ steps:
 
 | 维度 | 权重 | 说明 |
 |------|------|------|
-| accuracy | 1.0 | 事实准确性 |
-| completeness | 1.0 | 回答完整性 |
+| accuracy | 1.5 | 事实准确性 |
+| completeness | 1.2 | 回答完整性 |
 | relevance | 1.0 | 相关性 |
-| clarity | 1.0 | 表述清晰度 |
+| clarity | 0.8 | 表述清晰度 |
 | citation | 1.0 | 引用准确性 |
 | hallucination | 1.5 | 反幻觉（权重最高） |
+
+> 除 6 维 LLM Judge 外，另接 RAGAS 三指标（`faithfulness` / `context_precision` / `context_recall`）用于检索与忠实度层面的回归检测。
 
 质量门禁阈值：overall >= 7.0, hallucination >= 7.0, citation >= 6.0。
 
