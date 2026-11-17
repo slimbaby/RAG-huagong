@@ -1,6 +1,6 @@
 # Agent 工程面试题 · 基于本项目的对照回答（2026-10-27）
 
-> 这 16 道题是典型的 **Java 后端 + Agent 工程**口径，而本项目是 **Python 3.13 / FastAPI / LangGraph**。
+> 这 16 道题是典型的 **Java 后端 + Agent 工程**口径，而本项目是 **Python 3.10 / FastAPI / LangGraph**。
 > 回答原则：**项目里有的给真实代码实现；项目里没有的，明确说"我们没用 X，原因是 Y"，再给出 Java 侧的等价做法**——不硬凑。
 > 代码位置均可在本仓库核对，路径以 `backend/` 为根。
 
@@ -10,7 +10,7 @@
 
 **参考回答**：
 
-> 我做的是一个面向化工/法规领域的企业级 RAG 知识库系统，Python 3.13 + FastAPI + LangGraph，1.6 万行左右代码，覆盖文档入库、三路检索、答案生成、自动化评测、全链路追踪，**外加一套固定业务流程引擎**。
+> 我做的是一个面向化工/法规领域的企业级 RAG 知识库系统，Python 3.10 + FastAPI + LangGraph，1.6 万行左右代码，覆盖文档入库、三路检索、答案生成、自动化评测、全链路追踪，**外加一套固定业务流程引擎**。
 >
 > 技术上我自己实现了三块：手写 BM25 倒排索引（不用 ES）、RRF 融合 + cross-encoder 精排的混合检索、自研 tracer（ContextVar + span 树 + 异步落盘 + 前端火焰图）。另外做了完整的自动化评测体系——8 个指标加权 + 质量门禁 + RAGAS 交叉验证，能用数字证明改动是变好还是变坏。
 >
@@ -26,7 +26,7 @@
 
 **定位**：面向化工/法规领域的企业级 RAG 知识库问答系统 + 固定业务流程引擎。
 
-**规模**：后端 115 个 Python 文件 + 前端 29 个 TS/TSX，约 1.6 万行；docker-compose 9 个服务 + K8s Kustomize（含 CronJob 定时评测）。
+**规模**：后端 116 个 Python 文件（app 94 + tests）+ 前端 32 个 TS/TSX，约 1.6 万行；docker-compose 9 个服务 + K8s Kustomize（含 CronJob 定时评测）。
 
 **技术栈**：
 
@@ -52,13 +52,13 @@
 ```
 
 **核心数字**：
-- 检索漏斗：每路 top10 → 双路 ×2 = 20 → RRF 融合截 20 → 精排后 5
+- 检索漏斗：每路 top10 → 双路 ×2 = 20 → RRF 融合截 10 → 精排后 5
 - 置信度阈值：reranker 0.10 / vector 0.40
 - 评测：并发 3，RAGAS 批 10×3 进程，耗时 45.3→17.7 min
 - 记忆：短期 60 条/24h，历史注入 12 条×200 字符，去重 md5 + 0.85 相似 LLM 合并，遗忘 30 天 & importance<0.3
 - 切分：chunk 1024/100；表格组上限 2048 字符 / 20 行
 
-**质量基线**：全量后端 **171 passed**。
+**质量基线**：全量后端 **183 passed**。
 
 ---
 
@@ -674,7 +674,7 @@ intermediates = list(await asyncio.gather(*tasks))    # 三阶段并发
 
 自研 BM25 是纯 Python 倒排检索，CPU 密集且**同步**。直接在 async 函数里调会**阻塞整个 event loop**。
 
-解法是丢到线程池——用的是 `asyncio.to_thread`（Python 3.9+ 的封装）：
+解法是丢到线程池——用的是 `asyncio.to_thread`（Python 3.9+ 的封装，项目锁定 3.10）：
 
 ```python
 def _do_bm25():
@@ -1666,7 +1666,7 @@ public class ToolDispatcher {
 | 重试 | LLM 3 次 / RAG 3 次 / 工具 2 次（**后两者未接线**） | 同上 |
 | 短期记忆 | Redis 60 条 / 24h TTL | `app/services/session_store.py` |
 | 长期记忆去重 | md5 + 0.85 相似 LLM 合并 | `app/services/memory_manager.py` |
-| 检索漏斗 | 每路 10 → ×2 = 20 → RRF 截 20 → 精排 5 | `app/vectorstore/hybrid_store.py` |
+| 检索漏斗 | 每路 10 → ×2 = 20 → RRF 截 10 → 精排 5 | `app/vectorstore/hybrid_store.py` |
 | 阈值 | reranker 0.10 / vector 0.40 | `app/core/config.py` |
 | 切分 | chunk 1024/100；表格 2048 字符/20 行 | `app/tools/` |
 | 评测并发 | 3；RAGAS 10×3 进程 | `app/evaluation/runner.py` |
