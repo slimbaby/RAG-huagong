@@ -54,6 +54,24 @@ class RAGState(TypedDict):
     # ── 工具调用（generate 节点工具循环 / tool_call 节点使用）──
     tools_to_call: list[dict[str, Any]]
     tool_results: list[dict[str, Any]]
+    # ── 多流程配置化平台（通用对话内核）──
+    # 后端权威意图路由结果：flow_id + 动作，前端零规则
+    flow_id: str | None
+    flow_action: str | None
+    flow_definition_version: int
+    needs_choice: bool
+    # 前端每轮回传的槽位，后端不落库
+    flow_slots: dict[str, Any]
+    # 通用四件套本轮产出的结构化结果（slots/missing/errors/card/complete）
+    flow_payload: dict[str, Any]
+    # ── 入园申请 Agent（方案乙，兼容层）──
+    # 前置轻量意图闸结果：True 时 generate 节点切到单 Agent 工具循环，
+    # 且只注入四件套工具，绝不白跑向量检索。
+    entry_action: bool
+    # 前端每轮回传的已抽字段；后端不落库，丢了由前端从聊天历史重抽
+    entry_slots: dict[str, Any]
+    # Agent 本轮产出的结构化结果（slots / missing / errors / card / complete）
+    entry_payload: dict[str, Any]
 
 
 class AgentState(RAGState):

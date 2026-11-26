@@ -61,6 +61,8 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",
     "aiofiles>=23.2.1",
     "langgraph-checkpoint-sqlite>=2.0",
+    # 入园通行证二维码（纯 Python，生成 SVG data URI）
+    "qrcode>=8.0",
 ]
 
 [project.optional-dependencies]

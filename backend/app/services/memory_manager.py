@@ -183,6 +183,11 @@ class MemoryManager:
             for item in similar:
                 memory = self._memories.get(item["memory_id"])
                 if memory and not memory.expired:
+                    # 会话隔离：传入 session_id 时只召回本会话产生的记忆。
+                    # 此前 session_id 参数未参与过滤，长期记忆是全局池，
+                    # 司机的证件信息可能被其它会话召回，属 PII 越界。
+                    if session_id and memory.session_id != session_id:
+                        continue
                     memory.access_count += 1
                     memory.last_accessed = time.time()
                     memories.append(memory)
@@ -282,7 +287,8 @@ class MemoryManager:
                             kb_context: str = "", intent: str = "kb_query",
                             retrieval_confident: bool = True,
                             query_type: str = "factual",
-                            lesson_text: str = "") -> tuple:
+                            lesson_text: str = "",
+                            include_long_term: bool = True) -> tuple:
         """构建完整的多轮对话 messages 数组，供 LLM.chat() 使用
 
         Args:
@@ -296,8 +302,13 @@ class MemoryManager:
         # 1. 获取短期对话历史
         chat_history = await self.get_chat_history(session_id, limit=self.max_messages)
 
-        # 2. 召回长期记忆
-        relevant_memories = await self.recall(user_query, session_id=session_id)
+        # 2. 召回长期记忆。
+        # include_long_term=False 用于入园办理通道：司机身份证号/手机号
+        # 不进长期记忆池，也不从别的会话召回任何个人事实。
+        if include_long_term:
+            relevant_memories = await self.recall(user_query, session_id=session_id)
+        else:
+            relevant_memories = []
 
         # 3. 格式化长期记忆
         memory_text = self._format_memories(relevant_memories)

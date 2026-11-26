@@ -15,8 +15,43 @@ import os
 import uuid
 import time
 import logging
+import re
 
 logger = logging.getLogger(__name__)
+
+# ── PII 脱敏（trace 会落盘 JSONL + details/*.json，必须兜底）──
+_IDNO_RE = re.compile(r"(?<!\d)(\d{17}[\dXx])(?!\d)")
+_PHONE_RE = re.compile(r"(?<!\d)(1[3-9]\d{9})(?!\d)")
+_SENSITIVE_KEYS = {"entry_slots", "slots", "form_data", "payload", "payloads",
+                   "user_query", "answer", "question", "inputs", "outputs"}
+_DROP_KEYS = {"entry_slots", "slots", "form_data"}
+
+
+def _mask_text(text: str) -> str:
+    text = _IDNO_RE.sub(lambda m: m.group(1)[:3] + "***************" + m.group(1)[-1], text)
+    text = _PHONE_RE.sub(lambda m: m.group(1)[:3] + "****" + m.group(1)[-4:], text)
+    return text
+
+
+def _redact(value: Any, _depth: int = 0) -> Any:
+    """递归脱敏：整包字段丢掉，字符串里的证件号/手机号打码。"""
+    if _depth > 8:
+        return "[truncated]"
+    if isinstance(value, str):
+        return _mask_text(value)
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if k in _DROP_KEYS:
+                continue
+            out[k] = _redact(v, _depth + 1)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_redact(v, _depth + 1) for v in value[:50]]
+    if isinstance(value, (int, float, bool, type(None))):
+        return value
+    return _mask_text(str(value))
+
 
 # 上下文变量：按 asyncio Task 隔离，避免并发请求互相覆盖 trace_id / span 栈
 # 用不可变 tuple 存 span 栈，子 Task 里的 push/pop 不会污染父 Task
@@ -117,7 +152,8 @@ class Tracer:
 
     def start_trace(self, user_query: str, request_id: str = None, task_id: str = None, session_id: str = None, metadata: Dict = None) -> str:
         trace_id = str(uuid.uuid4())[:8]
-        trace = Trace(trace_id=trace_id, task_id=task_id, request_id=request_id, user_query=user_query, session_id=session_id or "", start_time=time.time(), metadata=metadata or {})
+        trace = Trace(trace_id=trace_id, task_id=task_id, request_id=request_id,
+                      user_query=_mask_text(user_query or ""), session_id=session_id or "", start_time=time.time(), metadata=metadata or {})
         self._active_traces[trace_id] = trace
         self._completed_spans[trace_id] = []
         # 记录 token 以便 end_trace 精确回滚，避免并发场景下残留脏上下文
@@ -153,7 +189,7 @@ class Tracer:
                 pass
         trace.end_time = time.time()
         trace.duration_ms = (trace.end_time - trace.start_time) * 1000
-        trace.answer = answer[:2000] if answer else ""
+        trace.answer = _mask_text(answer[:2000]) if answer else ""
         trace.sources_count = sources_count
         trace.status = status
         trace.error_message = error_message
@@ -239,7 +275,7 @@ class Tracer:
     def _persist_trace(self, trace: Trace):
         try:
             # 摘要行（轻量字段）：写入每日索引文件，供列表接口快速加载
-            summary = {k: v for k, v in trace.__dict__.items() if k != "spans"}
+            summary = _redact({k: v for k, v in trace.__dict__.items() if k != "spans"})
             summary["answer"] = (trace.answer or "")[:200]
             date_str = datetime.now().strftime("%Y-%m-%d")
             file_path = os.path.join(self.storage_path, f"traces_{date_str}.jsonl")
@@ -248,8 +284,10 @@ class Tracer:
             # 完整数据（含 spans）：单独落盘，详情/火焰图按 trace_id O(1) 直读
             details_dir = os.path.join(self.storage_path, "details")
             os.makedirs(details_dir, exist_ok=True)
-            detail = dict(trace.__dict__)
-            detail["spans"] = [s.to_dict() if hasattr(s, "to_dict") else s for s in trace.spans]
+            detail = _redact(dict(trace.__dict__))
+            detail["spans"] = [
+                _redact(s.to_dict() if hasattr(s, "to_dict") else s) for s in trace.spans
+            ]
             detail_path = os.path.join(details_dir, f"{trace.trace_id}.json")
             with open(detail_path, "w", encoding="utf-8") as f:
                 json.dump(detail, f, ensure_ascii=False, default=str)

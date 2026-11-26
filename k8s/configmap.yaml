@@ -24,9 +24,11 @@ data:
   APP_ENV: "production"
   APP_DEBUG: "false"
   LOG_LEVEL: "INFO"
-  # Model
-  PREMIUM_MODEL_NAME: "mimo-72b"
-  PREMIUM_MODEL_API_BASE_URL: "https://api.xiaomi.com/v1"
+  # Model (OpenAI-compatible endpoint; API keys come from Secret, not ConfigMap)
+  PREMIUM_MODEL_NAME: "deepseek-v4-pro"
+  PREMIUM_MODEL_API_BASE_URL: "https://api.deepseek.com"
+  STANDARD_MODEL_NAME: "deepseek-v4-pro"
+  STANDARD_MODEL_API_BASE_URL: "https://api.deepseek.com"
   # Embedding
   EMBEDDING_MODEL_NAME: "BAAI/bge-base-zh-v1.5"
   EMBEDDING_DIMENSION: "768"

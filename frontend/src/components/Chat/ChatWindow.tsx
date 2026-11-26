@@ -4,6 +4,8 @@ import { useChatStore } from '../../stores/chatStore';
 import type { StepProgress } from '../../types';
 import MessageBubble from './MessageBubble';
 import ChatInput from './ChatInput';
+import FlowChoiceCard from '../Flow/FlowChoiceCard';
+import type { IntentCandidate } from '../../types';
 
 const StepProgressView: React.FC<{ steps: StepProgress[] }> = ({ steps }) => (
   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 16 }}>
@@ -45,7 +47,7 @@ const TypingIndicator: React.FC = () => (
 );
 
 const ChatWindow: React.FC = () => {
-  const { messages, isLoading } = useChatStore();
+  const { messages, isLoading, pendingIntentChoice, resolveIntentChoice } = useChatStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -83,6 +85,12 @@ const ChatWindow: React.FC = () => {
           messages.filter((msg) => !msg.isLoading).map((msg) => (
             <MessageBubble key={msg.id} message={msg} />
           ))
+        )}
+        {pendingIntentChoice && (
+          <FlowChoiceCard
+            choice={pendingIntentChoice}
+            onChoose={(c: IntentCandidate | null) => resolveIntentChoice(c)}
+          />
         )}
         {loadingMsg && (loadingMsg.content ? (
           <MessageBubble message={loadingMsg} />

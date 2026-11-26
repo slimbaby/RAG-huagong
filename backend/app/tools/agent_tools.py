@@ -284,3 +284,40 @@ try:
     _HAS_WORKFLOW = True
 except ImportError:
     _HAS_WORKFLOW = False
+
+
+# ── 入园申请 Agent 工具（方案乙：只读四件套）──
+# 独立 try 包裹，保证该模块缺失时 RAG 主链仍可用。
+# 关键：入园工具**不并入** TOOLS_SCHEMA 全量清单。普通知识库问答看不到它们，
+# 只有前置意图闸命中入园办理时才由 get_tools_schema(entry_action=True) 提供，
+# 从根上避免「查入园规定」被误当成「提交入园申请」。
+try:
+    from .entry_tools import (
+        ENTRY_TOOLS_SCHEMA,
+        ENTRY_TOOL_REGISTRY,
+        ENTRY_AGENT_SYSTEM_PROMPT,
+    )
+    _HAS_ENTRY = True
+except ImportError:
+    ENTRY_TOOLS_SCHEMA = []
+    ENTRY_TOOL_REGISTRY = {}
+    ENTRY_AGENT_SYSTEM_PROMPT = ""
+    _HAS_ENTRY = False
+
+# 全量基线（只读业务查询 + 固定流程工具），供普通问答使用
+BASE_TOOLS_SCHEMA = list(TOOLS_SCHEMA)
+BASE_TOOL_REGISTRY = dict(TOOL_REGISTRY)
+
+
+def get_tools_schema(*, entry_action: bool = False):
+    """按意图裁剪工具集：入园办理只给四件套，其余请求看不到任何入园工具。"""
+    if entry_action:
+        return list(ENTRY_TOOLS_SCHEMA)
+    return list(BASE_TOOLS_SCHEMA)
+
+
+def get_tool_registry(*, entry_action: bool = False):
+    """工具注册表同样裁剪，避免模型绕过 schema 直接调到别的工具。"""
+    if entry_action:
+        return dict(ENTRY_TOOL_REGISTRY)
+    return dict(BASE_TOOL_REGISTRY)

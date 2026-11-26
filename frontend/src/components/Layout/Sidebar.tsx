@@ -1,17 +1,36 @@
 import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { MessageSquare, FileText, ScrollText, FlaskConical, Plus, Trash2, MessageCircle, BarChart3, LogOut } from 'lucide-react';
+import {
+  MessageSquare, FileText, ScrollText, FlaskConical, Plus, Trash2, MessageCircle,
+  BarChart3, LogOut, Truck, ClipboardList, ShieldCheck, Sparkles, Settings2, Boxes,
+} from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import { useAuthStore } from '../../stores/authStore';
+import { useFlowStore } from '../../stores/flowStore';
 
 interface NavItem { key: string; path: string; label: string; icon: React.ReactNode; }
 
-const navItems: NavItem[] = [
+const staticNavItems: NavItem[] = [
   { key: 'chat', path: '/', label: '知识库助手', icon: <MessageSquare size={18} /> },
   { key: 'documents', path: '/documents', label: '文档管理', icon: <FileText size={18} /> },
   { key: 'records', path: '/records', label: '调用记录', icon: <ScrollText size={18} /> },
   { key: 'evaluation', path: '/evaluation', label: '质量评测', icon: <BarChart3 size={18} /> },
 ];
+
+// 图标只是渲染映射，不含任何业务判定；未配置的图标统一回落到 Boxes。
+const ICONS: Record<string, React.ReactNode> = {
+  Truck: <Truck size={18} />,
+  ClipboardList: <ClipboardList size={18} />,
+  ShieldCheck: <ShieldCheck size={18} />,
+  Sparkles: <Sparkles size={18} />,
+  FileText: <FileText size={18} />,
+  Boxes: <Boxes size={18} />,
+};
+const fallbackIcon = <Boxes size={18} />;
+
+const configNavItem: NavItem = {
+  key: 'flow-config', path: '/flows/config', label: '流程配置', icon: <Settings2 size={18} />,
+};
 
 const Sidebar: React.FC = () => {
   const location = useLocation();
@@ -19,12 +38,29 @@ const Sidebar: React.FC = () => {
   const { sessions, sessionId, createSession, switchSession, deleteSession, loadSessions } = useChatStore();
   const authUsername = useAuthStore((s) => s.username);
   const authRoleName = useAuthStore((s) => s.role_name);
+  const authRoleId = useAuthStore((s) => s.role_id);
   const logout = useAuthStore((s) => s.logout);
   const [hoveredSession, setHoveredSession] = React.useState<string | null>(null);
+  const { menuItems, loadEntryPoints } = useFlowStore();
 
   React.useEffect(() => {
     loadSessions();
-  }, [loadSessions]);
+    loadEntryPoints();
+  }, [loadSessions, loadEntryPoints]);
+
+  // 菜单完全由后端 entry_points 配置下发（D8）；角色过滤在后端已完成。
+  const dynamicNavItems: NavItem[] = menuItems().map((ep) => ({
+    key: `${ep.flow_id}_${ep.key}`,
+    path: ep.path || `/flows/${ep.flow_id}/apply`,
+    label: ep.label,
+    icon: ICONS[ep.icon || ''] || fallbackIcon,
+  }));
+  const canEditConfig = ['admin', 'config_editor', 'config_publisher'].includes(String(authRoleId || ''));
+  const navItems = [
+    ...staticNavItems,
+    ...dynamicNavItems,
+    ...(canEditConfig ? [configNavItem] : []),
+  ];
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/' || location.pathname === '/chat';

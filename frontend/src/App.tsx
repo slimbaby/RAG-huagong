@@ -11,6 +11,10 @@ const DocumentPage = React.lazy(() => import('./pages/DocumentPage'));
 const RecordPage = React.lazy(() => import('./pages/RecordPage'));
 const EvaluationPage = React.lazy(() => import('./pages/EvaluationPage'));
 const LoginPage = React.lazy(() => import('./pages/LoginPage'));
+const FlowApplyPage = React.lazy(() => import('./pages/FlowApplyPage'));
+const FlowMyPage = React.lazy(() => import('./pages/FlowMyPage'));
+const FlowReviewPage = React.lazy(() => import('./pages/FlowReviewPage'));
+const FlowConfigPage = React.lazy(() => import('./pages/FlowConfigPage'));
 
 const PageLoader = () => (
   <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -23,6 +27,13 @@ const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   if (!initialized) return <PageLoader />;
   if (!token) return <Navigate to="/login" replace />;
   return <>{children}</>;
+};
+
+// 老 URL 迁移兼容：仅这一处保留流程标识，通用页面完全由 /flows/:flowId/* 接管。
+const LEGACY_REDIRECTS: Record<string, string> = {
+  '/entry/apply': '/flows/driver_entry/apply',
+  '/entry/my': '/flows/driver_entry/my',
+  '/entry/review': '/flows/driver_entry/review',
 };
 
 const MainLayout: React.FC = () => (
@@ -42,6 +53,16 @@ const MainLayout: React.FC = () => (
           <Route path="/documents" element={<DocumentPage />} />
           <Route path="/records" element={<RecordPage />} />
           <Route path="/evaluation" element={<EvaluationPage />} />
+          {/* 配置后台（静态路径放在动态段之前） */}
+          <Route path="/flows/config" element={<FlowConfigPage />} />
+          {/* 通用流程页面：新增流程不需要改这里 */}
+          <Route path="/flows/:flowId/apply" element={<FlowApplyPage />} />
+          <Route path="/flows/:flowId/my" element={<FlowMyPage />} />
+          <Route path="/flows/:flowId/review" element={<FlowReviewPage />} />
+          {Object.entries(LEGACY_REDIRECTS).map(([from, to]) => (
+            <Route key={from} path={from} element={<Navigate to={to} replace />} />
+          ))}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
     </main>

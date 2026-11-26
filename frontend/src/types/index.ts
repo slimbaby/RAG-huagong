@@ -15,6 +15,57 @@ export const STEP_LABELS: Record<string, string> = {
   tool_call: '工具调用',
 };
 
+export interface FlowCardItem {
+  key: string;
+  label: string;
+  value: string;
+  filled: boolean;
+}
+
+export interface FlowCard {
+  title: string;
+  groups: { key: string; label: string; items: FlowCardItem[] }[];
+  attachments: (FlowCardItem & { id?: string })[];
+}
+
+/** 通用流程结构化产物：由后端 FlowDefinition.build_payload 下发，前端只渲染。 */
+export interface FlowPayload {
+  __flow_payload__?: boolean;
+  __entry_payload__?: boolean;
+  flow_id?: string;
+  definition_version?: number;
+  slots: Record<string, any>;
+  missing: string[];
+  errors: string[];
+  complete: boolean;
+  card?: FlowCard | null;
+  hint?: string;
+  note?: string;
+  attachments?: any[];
+  rule_check?: { missing: string[]; errors: string[]; complete: boolean };
+}
+
+/** 后端权威意图路由下发的候选卡数据（D10：前端零判定规则）。 */
+export interface IntentCandidate {
+  flow_id: string;
+  name: string;
+  action: string;
+  hint?: string;
+}
+
+export interface IntentChoice {
+  type?: string;
+  candidates: IntentCandidate[];
+  hint: string;
+  question: string;
+  flow_id?: string;
+}
+
+// 兼容旧入园命名：类型别名，不是两套模型
+export type EntryCardItem = FlowCardItem;
+export type EntryCard = FlowCard;
+export type EntryPayload = FlowPayload;
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -24,6 +75,9 @@ export interface ChatMessage {
   isLoading?: boolean;
   steps?: StepProgress[];
   currentStep?: string;
+  flowPayload?: FlowPayload | null;
+  /** @deprecated 用 flowPayload */
+  entryPayload?: EntryPayload | null;
 }
 
 export interface CitationInfo {
@@ -38,6 +92,17 @@ export interface ChatRequest {
   question: string;
   session_id?: string;
   stream?: boolean;
+  // ── 通用流程（前端只回传状态，不做意图判定）──
+  flow_id?: string;
+  flow_slots?: Record<string, any>;
+  flow_force?: boolean;
+  flow_action?: 'action' | 'readonly' | 'attach' | 'status';
+  intent_resolved?: boolean;
+  definition_version?: number;
+  /** @deprecated 兼容旧入园前端 / E2E */
+  entry_slots?: Record<string, any>;
+  /** @deprecated 兼容旧入园前端 / E2E */
+  entry_force?: boolean;
 }
 
 export interface ChatResponse {
@@ -51,6 +116,18 @@ export interface ChatResponse {
     type: string;
     keywords: string[];
   };
+  flow_id?: string | null;
+  flow_action?: string | null;
+  flow_slots?: Record<string, any>;
+  flow_payload?: FlowPayload | null;
+  intent_choice?: IntentChoice | null;
+  definition_version?: number;
+  /** @deprecated */
+  entry_action?: boolean;
+  /** @deprecated */
+  entry_slots?: Record<string, any>;
+  /** @deprecated */
+  entry_payload?: EntryPayload | null;
   timestamp: string;
 }
 

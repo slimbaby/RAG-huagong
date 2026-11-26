@@ -182,6 +182,92 @@ class QueryRewriter:
             return QueryType.DATA_LOOKUP, 0.7
         return QueryType.FACTUAL, 0.6
 
+    # ===== 入园办理意图：命名规则表 + 优先级流水线 =====
+    # 只用 Python re 与 JS RegExp 都支持的子集（字符类、^、.{0,N}、|、非捕获组），
+    # 前后端行为由 shared/entry_intent_cases.json + pytest/vitest 一致性用例锁死。
+    # 顺序：P0 句首办理意图 → P1 只读咨询 → P2 通用办理模式，命中即短路。
+    ENTRY_INTENT_RULES = (
+        ("P0_strong_head", "action"),
+        ("P1_readonly", "readonly"),
+        ("P2_action", "action"),
+    )
+    ENTRY_STRONG_HEAD_RE = re.compile(
+        r'^\s*(?:师傅|你好|您好|嗨|嗯|那个)?[\s，,]*'
+        r'(?:帮我|我要|我想|给我|麻烦|请帮我|能帮我|可以帮我|来)'
+        r'.{0,8}'
+        r'(?:申请|办理|帮我办|提交|预约|报备|登记|办一下|办|放行|弄|搞)'
+    )
+    ENTRY_DOMAIN_RE = re.compile(
+        r'(?:入园|进园|入厂|进厂|园区|通行证|入园证|手续|证件|照片|材料)'
+    )
+    ENTRY_QUESTION_TAIL_RE = re.compile(r'(?:吗|么|呢)[？?]?\s*$|[？?]\s*$')
+    ENTRY_ACTION_PATTERNS = (
+        # 办理动词 + 领域对象
+        r'(?:申请|办理|帮我办|提交|预约|报备|办一下|登记).{0,10}(?:入园|进园|入厂|进厂|园区|通行证|手续)',
+        # 倒装：领域对象 + 动作（含报备/登记）
+        r'(?:入园|进园|入厂|进厂).{0,10}(?:申请|预约|办理|通行证|手续|报备|登记)',
+        # 我要/我想 + 入园/进厂
+        r'^(?:帮我|我要|我想).{0,12}(?:入园|进园|入厂|进厂)',
+        # 补材料轮（本次唯一纳入的场景词）：证件/照片已备 + 提交/帮我
+        r'(?:证件|照片|材料).{0,12}(?:拍好|传好|都齐|都备齐|准备好了).{0,12}(?:提交|帮我|申请|办)',
+    )
+    ENTRY_READONLY_PATTERNS = (
+        r'^(?:查|查询|查一下|查查|看看|问一下|请问|想问|咨询|了解一下)',
+        r'(?:怎么|如何|怎样|需要什么|要带什么|带哪些|哪些证件|哪些材料|什么证件|什么材料|需要哪些|流程是什么|什么流程)',
+        r'(?:规定|制度|要求|标准|政策|流程说明|入园须知)',
+        r'(?:进度|状态|结果|通过了吗|批了吗|审核到哪)',
+        r'(?:吗|么|呢)[？?]?\s*$',
+    )
+
+    @staticmethod
+    def normalize_intent_text(query: str) -> str:
+        """归一化：全角空格 / 中英标点 / 连续空白 / 小写，保证 ^ 锚与窗口稳定。"""
+        q = (query or "").replace("\u3000", " ").replace("？", "?").replace("，", ",")
+        return re.sub(r"\s+", " ", q).strip().lower()
+
+    @classmethod
+    def is_entry_read_only(cls, query: str) -> bool:
+        """只读咨询（规定/流程/进度/疑问句）→ 留在 RAG 知识库问答。"""
+        q = cls.normalize_intent_text(query)
+        return any(re.search(p, q) for p in cls.ENTRY_READONLY_PATTERNS)
+
+    @classmethod
+    def is_entry_ambiguous(cls, query: str) -> bool:
+        """句首办理意图 + 疑问语气结尾：不擅判，交前端选择卡由司机本人决定。"""
+        q = cls.normalize_intent_text(query)
+        return bool(
+            cls.ENTRY_STRONG_HEAD_RE.search(q)
+            and cls.ENTRY_DOMAIN_RE.search(q)
+            and cls.ENTRY_QUESTION_TAIL_RE.search(q)
+        )
+
+    @classmethod
+    def classify_entry_detail(cls, query: str) -> Tuple[bool, str]:
+        """优先级流水线，返回 (是否办理, 命中规则 id)，供单测与 trace 观测。"""
+        q = cls.normalize_intent_text(query)
+        # P0：句首第一人称办理请求优先于只读规则；疑问语气结尾留给前端选择卡。
+        if (cls.ENTRY_STRONG_HEAD_RE.search(q)
+                and cls.ENTRY_DOMAIN_RE.search(q)
+                and not cls.ENTRY_QUESTION_TAIL_RE.search(q)):
+            return True, "P0_strong_head"
+        # P1：只读咨询
+        if any(re.search(p, q) for p in cls.ENTRY_READONLY_PATTERNS):
+            return False, "P1_readonly"
+        # P2：通用办理模式（含倒装、进厂、补材料轮）
+        for i, p in enumerate(cls.ENTRY_ACTION_PATTERNS):
+            if re.search(p, q):
+                return True, f"P2_action_{i}"
+        return False, "none"
+
+    @classmethod
+    def classify_entry_action(cls, query: str) -> bool:
+        """前置轻量意图闸：命中「办申请」才切到入园 Agent。
+
+        纯规则、零额外模型调用、可离线运行；接口保持返回 bool，
+        三态中的 ambiguous 由前端规则表 + 选择卡处理（方案 B）。
+        """
+        return cls.classify_entry_detail(query)[0]
+
     def _classify_query_intent(self, query: str) -> str:
         """判断用户问题是知识库查询、业务查询还是通用问题。返回 'kb_query'、'business_query' 或 'general'。"""
         query_lower = query.lower().strip()
@@ -189,6 +275,12 @@ class QueryRewriter:
         # 通用问候/闲聊
         if re.match(r'^(你好|hello|hi|嗨|hey|早上好|下午好|晚上好)', query_lower):
             return "general"
+
+        # 入园预约是事务型请求：直接走 generate + function calling。
+        # 否则「园区 / 审批 / 许可证」会命中下方 kb_keywords，白跑一轮向量检索，
+        # 还会把检索到的制度条文塞进 prompt 干扰工具调用。
+        if self.classify_entry_action(query_lower):
+            return "business_query"
 
         # 业务查询关键词（订单/库存/质检）
         business_keywords = [

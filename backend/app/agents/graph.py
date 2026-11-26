@@ -86,6 +86,9 @@ def extract_span_outputs(node_name: str, updates: Dict, state: Dict = None) -> D
             "judge_note": updates.get("judge_note", ""),
         }
     elif node_name == "generate":
+        if state and (state.get("entry_action") or state.get("flow_id")):
+            # 流程通道的回答可能复述用户填的证件信息，步骤事件只留标记
+            return {"flow_action": True, "pii_redacted": True}
         context = updates.get("context", "")
         answer = updates.get("answer", "")
         return {
@@ -112,7 +115,19 @@ def _make_wrapper(deps, node_fn, node_name: str = None):
             pass
 
         if tracer and span_type:
-            inputs = {k: v for k, v in state.items() if k != "_deps" and not k.startswith("query_vector")}
+            # PII 防护：司机身份证号/手机号会出现在 user_query、entry_slots、
+            # entry_payload 里，这些键一律不进 span inputs（trace 会落盘 JSONL）。
+            _TRACE_SKIP_KEYS = {
+                "user_query", "entry_slots", "entry_payload",
+                "flow_slots", "flow_payload", "answer",
+                "context", "metadata", "optimized_query", "keywords",
+                "expanded_queries", "sub_queries", "judge_note",
+            }
+            inputs = {
+                k: v for k, v in state.items()
+                if k != "_deps" and not k.startswith("query_vector")
+                and k not in _TRACE_SKIP_KEYS
+            }
             # 只保留可序列化的简单值
             clean_inputs = {}
             for k, v in inputs.items():
@@ -122,6 +137,7 @@ def _make_wrapper(deps, node_fn, node_name: str = None):
                     clean_inputs[k] = v
                 elif isinstance(v, dict):
                     clean_inputs[k] = {sk: sv for sk, sv in v.items() if isinstance(sv, (str, int, float, bool, type(None)))}
+            clean_inputs["pii_redacted"] = bool(state.get("entry_action"))
             with tracer.start_span(span_type, node_name or "", inputs=clean_inputs) as span:
                 updates = await node_fn(state)
                 span.outputs = extract_span_outputs(node_name, updates, state)

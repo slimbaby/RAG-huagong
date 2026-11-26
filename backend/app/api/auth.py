@@ -168,3 +168,66 @@ async def me(user: CurrentUser = Depends(get_current_user)):
         role_name=user.role_name,
         scope_ids=user.scope_ids,
     )
+
+
+async def require_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """仅管理员可访问的依赖（审批、创建司机账号等）。
+
+    后端硬校验，不依赖前端隐藏菜单。AUTH_ENABLED=False 时 get_current_user
+    返回 admin 上下文，开发模式行为保持一致。
+    """
+    if user.role_id != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可执行此操作")
+    return user
+
+
+class CreateUserRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=6, max_length=128)
+    role_id: str = Field(default="driver")
+
+
+class CreatedUserResponse(BaseModel):
+    username: str
+    role_id: str
+
+
+@router.post("/users", response_model=CreatedUserResponse, summary="创建司机账号（管理员）")
+async def create_user(
+    request: CreateUserRequest,
+    admin: CurrentUser = Depends(require_admin),
+):
+    """入园预约引入多账号后，原「仅首个用户可注册」的单用户模式不再够用。
+
+    白名单显式排除 admin：防止通过该接口创建第二个管理员。
+    配置后台双人发布需要 config_editor / config_publisher 两个不同账号，
+    因此这两个角色也允许由 admin 创建。角色在同一事务里绑定。
+    """
+    allowed_roles = {
+        "driver", "config_editor", "config_publisher",
+        "finance_user", "warehouse_user", "qc_user",
+        "finance", "hr", "production", "safety", "quality", "general_viewer",
+    }
+    if not _USERNAME_RE.match(request.username):
+        raise HTTPException(status_code=400, detail="用户名只能包含字母/数字/下划线/连字符，3-64 位")
+    if request.role_id not in allowed_roles:
+        raise HTTPException(status_code=400, detail=f"不允许创建角色 {request.role_id} 的账号")
+
+    from ..services.permission_service import ensure_builtin_roles
+    await ensure_builtin_roles()
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            if await conn.fetchval("SELECT 1 FROM users WHERE username = $1", request.username):
+                raise HTTPException(status_code=409, detail="用户名已存在")
+            await conn.execute(
+                "INSERT INTO users (username, password_hash) VALUES ($1, $2)",
+                request.username, hash_password(request.password),
+            )
+            await conn.execute(
+                "INSERT INTO user_roles (username, role_id) VALUES ($1, $2)",
+                request.username, request.role_id,
+            )
+    logger.info(f"管理员 {admin.username} 创建司机账号 {request.username}")
+    return CreatedUserResponse(username=request.username, role_id=request.role_id)

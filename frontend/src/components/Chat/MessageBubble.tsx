@@ -2,11 +2,19 @@ import React from 'react';
 import { Tag, Tooltip, Spin } from 'antd';
 import { UserOutlined, RobotOutlined, FileTextOutlined } from '@ant-design/icons';
 import type { ChatMessage, CitationInfo } from '../../types';
+import { useChatStore } from '../../stores/chatStore';
+import FlowConfirmCard from '../Flow/FlowConfirmCard';
 
 interface MessageBubbleProps { message: ChatMessage; }
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const isUser = message.role === 'user';
+  const flowPayload = message.flowPayload || message.entryPayload;
+  const currentFlowPayload = useChatStore((s) => s.flowPayload);
+  // 核对卡是「待本人确认的操作入口」，不是聊天记录：只渲染当前最新的那一张。
+  // 从 localStorage 恢复的历史消息即使还带着旧 payload，也不再每条回答都挂卡片；
+  // 提交成功后 clearFlowState() 会把它们一并撤下。
+  const showCard = Boolean(flowPayload?.card) && flowPayload === currentFlowPayload;
 
   const renderCitations = (citations: CitationInfo[]) => {
     if (!citations || citations.length === 0) return null;
@@ -37,7 +45,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
           <RobotOutlined style={{ fontSize: 14, color: '#FFFFFF' }} />
         </div>
       )}
-      <div style={{ maxWidth: '70%', minWidth: 80 }}>
+      <div style={{ maxWidth: showCard ? '85%' : '70%', minWidth: 80 }}>
         <div style={{
           padding: '12px 16px', borderRadius: isUser ? '12px 12px 0 12px' : '12px 12px 12px 0',
           background: isUser ? 'linear-gradient(-100.768deg, #1A3060 14.645%, #1E3A78 85.355%)' : 'linear-gradient(-112.264deg, #121D36 14.645%, #182540 85.355%)',
@@ -54,6 +62,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             </>
           )}
         </div>
+        {!isUser && !message.isLoading && showCard && flowPayload && (
+          <FlowConfirmCard payload={flowPayload} />
+        )}
         <div style={{ fontSize: 11, marginTop: 4, textAlign: isUser ? 'right' : 'left', color: '#5E6E88', fontFamily: "'Inter', sans-serif" }}>
           {new Date(message.timestamp).toLocaleTimeString()}
         </div>

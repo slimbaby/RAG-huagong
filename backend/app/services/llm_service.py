@@ -160,8 +160,11 @@ class LLMService:
             response = await self._create_completion(**kwargs)
             message = response.choices[0].message
 
+            # reasoning_content：DeepSeek 等思考模式模型会在 message 上返回该字段，
+            # 下一轮必须原样回传，否则服务端报 400。普通供应商没有该字段时为空串。
             result = {
                 "text": message.content or "",
+                "reasoning_content": getattr(message, "reasoning_content", None) or "",
                 "tool_calls": [],
                 "usage": {
                     "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
@@ -172,8 +175,11 @@ class LLMService:
 
             if message.tool_calls:
                 for tc in message.tool_calls:
+                    # OpenAI 规范要求每个 tool_call 带 type；DeepSeek V4 严格校验，
+                    # 缺失会在工具结果回传时报 422 missing field `type`。
                     result["tool_calls"].append({
                         "id": tc.id,
+                        "type": getattr(tc, "type", None) or "function",
                         "function": {
                             "name": tc.function.name,
                             "arguments": tc.function.arguments,

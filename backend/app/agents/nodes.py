@@ -31,9 +31,17 @@ def _tracer_span(tracer, span_type: SpanType, name: str, inputs: Dict = None):
 
 
 try:
-    from ..tools.agent_tools import TOOLS_SCHEMA
+    from ..tools.agent_tools import (
+        TOOLS_SCHEMA,
+        get_tools_schema,
+        get_tool_registry,
+        ENTRY_AGENT_SYSTEM_PROMPT,
+    )
 except ImportError:
     TOOLS_SCHEMA = []
+    get_tools_schema = lambda *, entry_action=False: []
+    get_tool_registry = lambda *, entry_action=False: {}
+    ENTRY_AGENT_SYSTEM_PROMPT = ""
 
 # 问题词停用表：从查询中剔除后，剩余分词视为实体候选（人名、机构名等）
 _QUESTION_WORDS = {
@@ -64,6 +72,18 @@ async def query_optimize_node(state: Dict[str, Any]) -> Dict[str, Any]:
     tracer = state.get("_deps", {}).get("tracer")
     user_query = state.get("user_query", "")
 
+    # 流程办理：意图由后端规则流水线判定完毕，不再叠一层 LLM 改写（零额外调用）
+    if state.get("flow_id") and state.get("flow_action") == "action":
+        return {
+            "optimized_query": user_query,
+            "query_type": "factual",
+            "intent": "business_query",
+            "keywords": [],
+            "expanded_queries": [],
+            "sub_queries": [],
+            "entry_action": bool(state.get("entry_action")),
+        }
+
     logger.info(f"[query_optimize_node] user_query='{user_query}', query_rewriter={'有' if query_rewriter else '无'}")
 
     if not query_rewriter:
@@ -92,6 +112,10 @@ async def query_optimize_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "optimized_query": optimized.rewritten,
             "query_type": optimized.query_type.value,
             "intent": optimized.intent,
+            # 意图只在 API 层判定一次（_derive_entry_action），graph 不重算；
+            # 否则会把 API 层判 False 的句子翻成 True，导致 generate 走进园 Agent
+            # 却没按 True 绑定请求级身份 / slots。
+            "entry_action": bool(state.get("entry_action")),
             "keywords": optimized.keywords,
             "expanded_queries": optimized.expanded_queries or [],
             "sub_queries": optimized.sub_queries or [],
@@ -241,7 +265,13 @@ async def retrieval_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     added += 1
             logger.info(f"[retrieval_node] 合并前序结果: +{added} 条，总计 {len(result_dicts)} 条")
 
-        return {"raw_results": result_dicts, "filtered_results": result_dicts}
+        # 把本轮（已合并前序轮次的）结果写回 state：补检索回边进来时，
+        # 下一轮 retrieval 才能在上轮基础上合并，而不是直接覆盖丢掉
+        return {
+            "raw_results": result_dicts,
+            "filtered_results": result_dicts,
+            "accumulated_results": result_dicts,
+        }
 
     except Exception as e:
         logger.error(f"Retrieval failed: {e}")
@@ -291,8 +321,13 @@ async def _probe_denied_scopes(state: Dict[str, Any], query: str) -> List[str]:
 
 
 async def _chat_with_tools(llm_client, messages, tools_schema, tool_registry, max_rounds=2, token_queue=None):
-    """带工具调用循环的对话。返回 {"text", "usage", "tool_trace": [...]}"""
+    """带工具调用循环的对话。返回 {"text", "usage", "tool_trace", "entry_payload"}
+
+    方案乙新增：工具输出里带 __entry_payload__ 标记时把它原样带出，
+    这样结构化结果不必依赖 contextvar 也能回到 state / SSE done。
+    """
     tool_trace = []
+    entry_payload = {}
     msgs = list(messages)
     usage_total = {}
     for _ in range(max_rounds + 1):
@@ -303,8 +338,16 @@ async def _chat_with_tools(llm_client, messages, tools_schema, tool_registry, ma
         if not calls:
             if token_queue:
                 token_queue.put_nowait(None)  # 非流式路径，直接放哨兵
-            return {"text": result.get("text", ""), "usage": usage_total, "tool_trace": tool_trace}
+            return {"text": result.get("text", ""), "usage": usage_total,
+                    "tool_trace": tool_trace, "entry_payload": entry_payload}
+        # 严格 OpenAI 兼容：每个 tool_call 必须带 type，DeepSeek V4 会做硬校验
+        for c in calls:
+            c.setdefault("type", "function")
         assistant_msg = {"role": "assistant", "content": result.get("text") or "", "tool_calls": calls}
+        # 思考模式模型要求把 reasoning_content 随 assistant 消息原样回传；
+        # 非思考模型没有该字段，保持不附加，避免向其它供应商发送未知字段。
+        if result.get("reasoning_content"):
+            assistant_msg["reasoning_content"] = result["reasoning_content"]
         msgs.append(assistant_msg)
         for tc in calls:
             fn_name = tc.get("function", {}).get("name", "")
@@ -327,12 +370,21 @@ async def _chat_with_tools(llm_client, messages, tools_schema, tool_registry, ma
                     output = json.dumps({"error": str(e)}, ensure_ascii=False)
             logger.info(f"[tool_loop] {fn_name}({args}) -> {str(output)[:120]}")
             tool_trace.append({"name": fn_name, "args": args, "output_preview": str(output)[:200]})
+            try:
+                parsed_output = json.loads(output) if isinstance(output, str) else output
+                if isinstance(parsed_output, dict) and (
+                    parsed_output.get("__flow_payload__") or parsed_output.get("__entry_payload__")
+                ):
+                    entry_payload = parsed_output
+            except (ValueError, TypeError):
+                pass
             msgs.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": output})
     # 轮次用尽，最后一次强制无工具回答
     if token_queue:
         token_queue.put_nowait(None)  # 非流式路径，直接放哨兵
     result = await llm_client.chat(msgs)
-    return {"text": result["text"], "usage": usage_total, "tool_trace": tool_trace}
+    return {"text": result["text"], "usage": usage_total,
+            "tool_trace": tool_trace, "entry_payload": entry_payload}
 
 
 async def _stream_to_queue(stream, queue: asyncio.Queue) -> Dict:
@@ -352,8 +404,213 @@ async def _stream_to_queue(stream, queue: asyncio.Queue) -> Dict:
     return {"text": "".join(full_text), "usage": {}}
 
 
+def _entry_answer_from_payload(payload: Dict[str, Any]) -> str:
+    """LLM 不可用 / 没调工具时，按确定性结果生成回复，保证链路不哑火。"""
+    if payload.get("complete"):
+        return (
+            "信息已经齐了，下面这张核对卡请你逐项看一下。确认无误后，"
+            "点「去表单提交」由你本人提交；AI 不会替你提交，也不会写入数据库。"
+        )
+    missing = (payload.get("missing") or [])[:4]
+    errors = payload.get("errors") or []
+    parts = []
+    if missing:
+        parts.append("还缺：" + "、".join(missing))
+    if errors:
+        parts.append("需要修正：" + "；".join(errors))
+    if not parts:
+        parts.append("请把入园申请的信息发我，照片和证件可以直接上传")
+    return "。".join(parts) + "。可以一次性把这几项发给我，我会帮你填进申请表，最后由你确认提交。"
+
+
+async def _generate_flow(state: Dict[str, Any], deps: Dict[str, Any], llm_client,
+                         memory_manager, tracer, session_id: str,
+                         user_query: str) -> Dict[str, Any]:
+    """通用流程办理 Agent：按 flow_id 注入四件套，产出结构化字段，绝不写库。
+
+    与 _generate_entry 的区别：字段、工具 schema、话术、抽取规则全部来自
+    已发布配置；工具名全平台只有一份，参数按 flow_id 派生（§5.1）。
+    LLM 不可用时走配置驱动的确定性抽取兜底，保证链路离线可跑。
+    """
+    from ..flows import context as flow_ctx
+    from ..flows.tools import (
+        FLOW_TOOL_REGISTRY, flow_system_prompt, flow_tools_schema,
+        tool_get_my_attachments,
+    )
+
+    definition = flow_ctx.definition()
+    if definition is None:
+        return {"answer": "当前流程配置不可用，请稍后重试或联系管理员。",
+                "citations": [], "context": "", "flow_payload": {}, "flow_slots": {}}
+
+    known = definition.sanitize_slots(state.get("flow_slots") or flow_ctx.slots() or {})
+    flow_ctx.set_payload({})
+    payload: Dict[str, Any] = {}
+    answer = ""
+
+    if llm_client:
+        history = []
+        if memory_manager and session_id:
+            try:
+                history = await memory_manager.get_chat_history(session_id, limit=6)
+            except Exception as e:
+                logger.warning(f"[flow_agent] 会话历史读取失败: {e}")
+        system = (flow_system_prompt(definition)
+                  + "\n\n## 已收集字段（不要重复索要，只问缺失项）\n"
+                  + json.dumps(known, ensure_ascii=False))
+        messages = [{"role": "system", "content": system}]
+        for m in history[-6:]:
+            if m.get("role") in ("user", "assistant") and m.get("content"):
+                messages.append({"role": m["role"], "content": str(m["content"])[:800]})
+        messages.append({"role": "user", "content": user_query})
+        try:
+            res = await _chat_with_tools(
+                llm_client, messages,
+                flow_tools_schema(definition), FLOW_TOOL_REGISTRY,
+                max_rounds=4, token_queue=state.get("_token_queue"),
+            )
+            answer = res.get("text") or ""
+            payload = res.get("entry_payload") or flow_ctx.get_payload() or {}
+            usage = res.get("usage", {})
+            if tracer:
+                tracer.record_tokens(usage.get("prompt_tokens", 0),
+                                     usage.get("completion_tokens", 0))
+        except Exception as e:
+            logger.warning(f"[flow_agent] LLM 工具循环失败，转规则兜底: {e}")
+            answer = ""
+
+    if not payload:
+        merged = definition.merge_slots(known, definition.extract_by_rules(user_query))
+        flow_ctx.set_payload(definition.build_payload(merged))
+        try:
+            await tool_get_my_attachments()
+        except Exception as e:
+            logger.warning(f"[flow_agent] 附件补齐失败: {e}")
+        payload = flow_ctx.get_payload() or definition.build_payload(merged)
+
+    payload = dict(payload)
+    payload["slots"] = definition.merge_slots(known, payload.get("slots") or {})
+    check = definition.validate(payload["slots"], for_submit=False)
+    payload["missing"] = check["missing"]
+    payload["errors"] = check["errors"]
+    payload["complete"] = check["complete"]
+
+    # 卡片只在信息核对完成时下发；「提交后不再重出卡」由意图路由层的
+    # session_completed 收敛负责（见 api/chat.py::_resolve_flow），不在生成层
+    # 按槽位是否变化推断——那会误伤「刚上传完附件、字段齐全」的正常出卡轮次。
+    if not payload["complete"]:
+        payload["card"] = None
+    elif not payload.get("card"):
+        payload["card"] = definition.build_card(payload["slots"])
+
+    if not answer.strip():
+        answer = _entry_answer_from_payload(payload)
+    for forbidden in ("已提交成功", "已经提交申请", "申请已受理"):
+        if forbidden in answer:
+            answer = answer.replace(forbidden, "信息已整理好（尚未提交）")
+
+    # 兼容层：旧前端仍读 entry_payload / entry_slots
+    return {
+        "answer": answer, "citations": [], "context": "",
+        "flow_payload": payload, "flow_slots": payload["slots"],
+        "entry_payload": payload, "entry_slots": payload["slots"],
+        "tool_results": [],
+    }
+
+
+async def _generate_entry(state: Dict[str, Any], deps: Dict[str, Any], llm_client,
+                          memory_manager, tracer, session_id: str,
+                          user_query: str) -> Dict[str, Any]:
+    """入园办理单 Agent：只注入四件套工具，产出结构化字段，绝不写库。
+
+    LLM 不可用（密钥失效/断网）时走规则抽取兜底，仍然能出 slots 与追问，
+    只是不生成自然语言润色——保证业务链路可离线运行与联调。
+    """
+    from ..services import entry_schema as entry_schema
+    from ..core import entry_context as entry_ctx
+    from ..tools.entry_tools import tool_get_my_entry_attachments
+
+    known = entry_schema.sanitize_slots(state.get("entry_slots") or {})
+    entry_ctx.set_payload({})
+    payload: Dict[str, Any] = {}
+    answer = ""
+
+    if llm_client:
+        history = []
+        if memory_manager and session_id:
+            try:
+                history = await memory_manager.get_chat_history(session_id, limit=6)
+            except Exception as e:
+                logger.warning(f"[entry_agent] 会话历史读取失败: {e}")
+        system = (
+            ENTRY_AGENT_SYSTEM_PROMPT
+            + "\n\n## 已收集字段（不要重复索要，只问缺失项）\n"
+            + entry_schema.to_json(known)
+        )
+        messages = [{"role": "system", "content": system}]
+        for m in history[-6:]:
+            if m.get("role") in ("user", "assistant") and m.get("content"):
+                messages.append({"role": m["role"], "content": str(m["content"])[:800]})
+        messages.append({"role": "user", "content": user_query})
+        try:
+            res = await _chat_with_tools(
+                llm_client, messages,
+                get_tools_schema(entry_action=True),
+                get_tool_registry(entry_action=True),
+                max_rounds=4,
+                token_queue=state.get("_token_queue"),
+            )
+            answer = res.get("text") or ""
+            payload = res.get("entry_payload") or entry_ctx.get_payload() or {}
+            usage = res.get("usage", {})
+            if tracer:
+                tracer.record_tokens(usage.get("prompt_tokens", 0),
+                                     usage.get("completion_tokens", 0))
+        except Exception as e:
+            logger.warning(f"[entry_agent] LLM 工具循环失败，转规则兜底: {e}")
+            answer = ""
+
+    if not payload:
+        # 确定性兜底：已有字段 + 本轮原文正则抽取 + 显式附件 ID
+        merged = entry_schema.merge_slots(known, entry_schema.extract_by_rules(user_query))
+        entry_ctx.set_payload(entry_schema.build_entry_payload(merged))
+        try:
+            await tool_get_my_entry_attachments()
+        except Exception as e:
+            logger.warning(f"[entry_agent] 附件补齐失败: {e}")
+        payload = entry_ctx.get_payload() or entry_schema.build_entry_payload(merged)
+
+    # 模型可能只回传部分字段，统一以「已知字段 ∪ 工具结果」为准
+    payload = dict(payload)
+    payload["slots"] = entry_schema.merge_slots(known, payload.get("slots") or {})
+    check = entry_schema.validate(payload["slots"], for_submit=False)
+    payload["missing"] = check["missing"]
+    payload["errors"] = check["errors"]
+    payload["complete"] = check["complete"]
+    if not payload["complete"]:
+        payload["card"] = None
+    elif not payload.get("card"):
+        payload["card"] = entry_schema.build_card(payload["slots"])
+
+    if not answer.strip():
+        answer = _entry_answer_from_payload(payload)
+    # 安全兜底：无论模型说什么，都不能让司机误以为已经提交
+    for forbidden in ("已提交成功", "已经提交申请", "申请已受理"):
+        if forbidden in answer:
+            answer = answer.replace(forbidden, "信息已整理好（尚未提交）")
+
+    return {
+        "answer": answer,
+        "citations": [],
+        "context": "",
+        "entry_payload": payload,
+        "entry_slots": payload["slots"],
+        "tool_results": [],
+    }
+
+
 async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """节点4: 生成回答（支持多轮记忆 + 工具调用循环）"""
+    """节点4: 生成回答（支持多轮记忆 + 工具调用循环 + 入园办理 Agent）"""
     deps = state.get("_deps", {})
     llm_client = deps.get("llm_client")
     citation_service = deps.get("citation_service")
@@ -380,6 +637,21 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"[generate_node] 教训召回失败，跳过注入: {e}")
             lesson_text = "（无）"
+
+    # 通用流程办理：后端权威路由命中后直接切单 Agent 工具循环，
+    # 按 flow_id 注入配置派生的四件套，不走检索、不写库。
+    if state.get("flow_id") and state.get("flow_action") == "action":
+        return await _generate_flow(
+            state, deps, llm_client, memory_manager, tracer, session_id,
+            state.get("user_query") or optimized_query,
+        )
+
+    # 入园办理兼容层：仅当旧链路单独命中时走原四件套。
+    if state.get("entry_action"):
+        return await _generate_entry(
+            state, deps, llm_client, memory_manager, tracer, session_id,
+            state.get("user_query") or optimized_query,
+        )
 
     if not llm_client:
         return {
@@ -426,7 +698,12 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
             )
             logger.info(f"[generate_node] 使用记忆模式, messages={len(messages)}条, 长期记忆={len(relevant_memories)}条")
             if tool_registry:
-                result = await _chat_with_tools(llm_client, messages, TOOLS_SCHEMA, tool_registry, token_queue=token_queue)
+                result = await _chat_with_tools(
+                    llm_client, messages,
+                    get_tools_schema(entry_action=False),
+                    get_tool_registry(entry_action=False),
+                    token_queue=token_queue,
+                )
             elif use_streaming:
                 result = await _stream_to_queue(llm_client.chat_stream(messages), token_queue)
             else:
@@ -449,7 +726,12 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 prompt += f"\n\n## 历史教训（同类问题的注意事项）\n{lesson_text}"
             if tool_registry:
                 messages = [{"role": "user", "content": prompt}]
-                result = await _chat_with_tools(llm_client, messages, TOOLS_SCHEMA, tool_registry, token_queue=token_queue)
+                result = await _chat_with_tools(
+                    llm_client, messages,
+                    get_tools_schema(entry_action=False),
+                    get_tool_registry(entry_action=False),
+                    token_queue=token_queue,
+                )
             elif use_streaming:
                 result = await _stream_to_queue(llm_client.generate_stream(prompt), token_queue)
             else:
@@ -535,7 +817,15 @@ async def tool_call_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def route_after_optimize(state: Dict[str, Any]) -> str:
-    """条件边: 根据意图分类路由到不同路径"""
+    """条件边: 根据意图分类路由到不同路径。
+
+    入园办理（含同一会话里的补信息轮次）一律直达 generate，
+    跳过 vectorize/retrieval/reranker，避免白跑向量检索。
+    """
+    if state.get("flow_id") and state.get("flow_action") == "action":
+        return "business"
+    if state.get("entry_action"):
+        return "business"
     intent = state.get("intent", "kb_query")
     if intent == "general":
         return "general"
@@ -660,18 +950,41 @@ async def evidence_judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if iteration > 0:
         logger.info(f"[evidence_judge] 补检索第{iteration}轮仍为空，进入生成")
         return {"need_more_evidence": False}
+
+    # 用户没有任何可见文档（空集 ≠ admin 的 None）→ 检索节点第一步就会短路返回空，
+    # 补检索再跑一轮必然还是空。直接放行，让 generate 走 denied_scope_hints 的权限话术。
+    allowed_doc_ids = state.get("allowed_doc_ids")
+    if allowed_doc_ids is not None and len(allowed_doc_ids) == 0:
+        logger.info("[evidence_judge] 用户无可见文档，跳过补检索")
+        return {"need_more_evidence": False}
+
     # 注意：此处不能按 retrieval_confident 放行——check_confidence 对空结果
     # 必标 False，若据此放行则本补检索回边永不可达（修复前的死逻辑，
     # 2026-09-25 由 test_graph_runtime 冒烟测试发现）。补检索只针对「结果为空」。
 
-    # 检索结果为空且是第一轮 → 用改写后的查询再试一次
+    # 检索结果为空且是第一轮 → 必须换一个查询再试。
+    # 第一轮用的就是 optimized_query，原样重跑等于同一 query + 同一向量，
+    # 结果只会再次为空（expanded_queries 在 retrieval 首轮结果不足时也已试过）。
     optimized_query = state.get("optimized_query") or state.get("user_query", "")
-    logger.info(f"[evidence_judge] 检索结果为空，第1轮补检索: {optimized_query}")
+    user_query = (state.get("user_query") or "").strip()
+    keywords = [k for k in (state.get("keywords") or []) if k]
+
+    if user_query and user_query != optimized_query.strip():
+        # 改写版搜空，最常见原因是改写跑偏 → 退回用户原话再试
+        retry_query, retry_note = user_query, "退回原始问句"
+    elif keywords:
+        # 原文与改写一致（改写没起作用）→ 用关键词拼一个更"硬"的查询
+        retry_query, retry_note = " ".join(keywords), "改用关键词"
+    else:
+        retry_query, retry_note = optimized_query, "无可用变体，原查询重试"
+
+    logger.info(f"[evidence_judge] 检索结果为空，第1轮补检索（{retry_note}）: {retry_query}")
     return {
         "need_more_evidence": True,
         "iteration_count": 1,
-        "optimized_query": optimized_query,
+        "optimized_query": retry_query,
         "query_vector": None,
+        "judge_note": retry_note,
     }
 
 

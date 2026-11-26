@@ -20,6 +20,9 @@ class SessionStore:
         self.password = password
         self.redis = None
         self._connected = False
+        # 会话归属与单会话 TTL（PII 隔离）：Redis 不可用时用进程内字典兜底
+        self._session_meta_mem: Dict[str, Dict] = {}
+        self._session_ttls: Dict[str, int] = {}
 
     async def connect(self):
         """连接 Redis"""
@@ -54,6 +57,47 @@ class SessionStore:
     def _session_meta_key(self, session_id: str) -> str:
         return f"session:{session_id}:meta"
 
+    async def bind_session(self, session_id: str, owner: str, ttl: int = 0):
+        """绑定会话归属，并可单独缩短该会话的原文留存期。
+
+        入园办理会话默认 2 小时（由 chat API 传入），普通问答维持全局 TTL。
+        """
+        await self.connect()
+        effective = int(ttl or self.ttl)
+        self._session_ttls[session_id] = effective
+        self._session_meta_mem[session_id] = {"owner": owner, "ttl": effective}
+        if self.redis:
+            try:
+                await self.redis.hset(self._session_meta_key(session_id), mapping={
+                    "owner": owner,
+                    "ttl": str(effective),
+                    "session_id": session_id,
+                    "last_active": str(time.time()),
+                })
+                await self.redis.expire(self._session_meta_key(session_id), effective)
+            except Exception as e:
+                logger.error(f"Redis绑定会话归属失败: {e}")
+
+    async def get_owner(self, session_id: str) -> str:
+        """返回会话归属用户名；历史会话无归属时返回空串（调用方按拒绝处理）。"""
+        await self.connect()
+        if self.redis:
+            try:
+                return await self.redis.hget(self._session_meta_key(session_id), "owner") or ""
+            except Exception as e:
+                logger.error(f"Redis读取会话归属失败: {e}")
+        return self._session_meta_mem.get(session_id, {}).get("owner", "")
+
+    async def _effective_ttl(self, session_id: str) -> int:
+        if self.redis:
+            try:
+                v = await self.redis.hget(self._session_meta_key(session_id), "ttl")
+                if v:
+                    return int(v)
+            except Exception:
+                pass
+        return self._session_ttls.get(session_id, self.ttl)
+
     async def add_message(self, session_id: str, role: str, content: str,
                           citations: list = None, metadata: dict = None):
         """追加一条消息到会话"""
@@ -70,20 +114,22 @@ class SessionStore:
 
         message_json = json.dumps(message, ensure_ascii=False)
         key = self._session_key(session_id)
+        ttl = await self._effective_ttl(session_id)
+        owner = self._session_meta_mem.get(session_id, {}).get("owner", "")
 
         if self.redis:
             try:
                 pipe = self.redis.pipeline()
                 pipe.rpush(key, message_json)
                 pipe.ltrim(key, -self.max_messages, -1)
-                pipe.expire(key, self.ttl)
-                # 更新会话元数据
+                pipe.expire(key, ttl)
+                # 更新会话元数据（hset 不覆盖已有的 owner 字段）
                 meta_key = self._session_meta_key(session_id)
-                pipe.hset(meta_key, mapping={
-                    "last_active": str(time.time()),
-                    "session_id": session_id,
-                })
-                pipe.expire(meta_key, self.ttl)
+                meta = {"last_active": str(time.time()), "session_id": session_id}
+                if owner:
+                    meta["owner"] = owner
+                pipe.hset(meta_key, mapping=meta)
+                pipe.expire(meta_key, ttl)
                 await pipe.execute()
             except Exception as e:
                 logger.error(f"Redis写入失败: {e}")
@@ -127,9 +173,11 @@ class SessionStore:
         else:
             if hasattr(self, '_memory_store') and session_id in self._memory_store:
                 del self._memory_store[session_id]
+        self._session_meta_mem.pop(session_id, None)
+        self._session_ttls.pop(session_id, None)
 
-    async def list_sessions(self, limit: int = 50) -> List[Dict]:
-        """列出最近的会话"""
+    async def list_sessions(self, limit: int = 50, owner: str = None) -> List[Dict]:
+        """列出最近的会话；传入 owner 时只返回该用户的会话。"""
         await self.connect()
 
         if self.redis:
@@ -139,8 +187,11 @@ class SessionStore:
                 async for key in self.redis.scan_iter("session:*:meta", count=100):
                     meta = await self.redis.hgetall(key)
                     if meta:
-                        # 获取最后一条消息作为预览
                         session_id = meta.get("session_id", "")
+                        session_owner = meta.get("owner", "")
+                        if owner and session_owner != owner:
+                            continue
+                        # 获取最后一条消息作为预览
                         messages_key = self._session_key(session_id)
                         last_msg = await self.redis.lindex(messages_key, -1)
                         preview = ""
@@ -150,6 +201,7 @@ class SessionStore:
 
                         sessions.append({
                             "session_id": session_id,
+                            "owner": session_owner,
                             "last_active": float(meta.get("last_active", 0)),
                             "preview": preview,
                         })
@@ -163,9 +215,13 @@ class SessionStore:
                 return []
             sessions = []
             for sid, msgs in self._memory_store.items():
+                session_owner = self._session_meta_mem.get(sid, {}).get("owner", "")
+                if owner and session_owner != owner:
+                    continue
                 preview = msgs[-1]["content"][:80] if msgs else ""
                 sessions.append({
                     "session_id": sid,
+                    "owner": session_owner,
                     "last_active": msgs[-1]["timestamp"] if msgs else 0,
                     "preview": preview,
                 })

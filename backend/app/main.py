@@ -110,6 +110,9 @@ app = FastAPI(
 )
 
 from .core.config import settings
+from .services.entry_service import EntryError
+from .flows.service import FlowError
+from .flows.store import FlowStoreError
 
 # CORS 白名单：来自配置（.env 的 CORS_ORIGINS），禁止对任意来源开放带凭证访问
 _cors_origins = [o for o in settings.CORS_ORIGINS if o] or ["http://localhost:5173"]
@@ -150,12 +153,33 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"error": "Internal Server Error", "message": str(exc) if settings.APP_DEBUG else "服务器内部错误"})
 
 
+@app.exception_handler(EntryError)
+async def entry_error_handler(request: Request, exc: EntryError):
+    """入园预约业务错误（状态冲突 / 归属不符 / 字段缺失）转成对应 HTTP 状态码。"""
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
+
+
+@app.exception_handler(FlowError)
+async def flow_error_handler(request: Request, exc: FlowError):
+    """通用流程业务错误。"""
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
+
+
+@app.exception_handler(FlowStoreError)
+async def flow_store_error_handler(request: Request, exc: FlowStoreError):
+    """配置治理错误（乐观锁冲突 / 双人发布 / dry-run 拒绝）。"""
+    body = {"detail": exc.message}
+    if exc.extra:
+        body["extra"] = exc.extra
+    return JSONResponse(status_code=exc.status_code, content=body)
+
+
 @app.get("/health", tags=["系统"])
 async def health_check():
     return {"status": "healthy", "service": settings.APP_NAME, "version": "2.0.0"}
 
 
-from .api import auth, chat, documents, health, resilience, errors, tracing, checkpoints, evaluation, scopes, workflows
+from .api import auth, chat, documents, health, resilience, errors, tracing, checkpoints, evaluation, scopes, workflows, entry, flows
 from .core.security import verify_token
 from fastapi import Depends
 
@@ -173,6 +197,8 @@ app.include_router(checkpoints.router, prefix="/api/checkpoints", tags=["检查�
 app.include_router(evaluation.router, prefix="/api/eval", tags=["评测"], dependencies=_protected)
 app.include_router(scopes.router, prefix="/api/scopes", tags=["权限管理"], dependencies=_protected)
 app.include_router(workflows.router, prefix="/api/workflows", tags=["固定流程"], dependencies=_protected)
+app.include_router(entry.router, prefix="/api/entry", tags=["入园预约（兼容层）"], dependencies=_protected)
+app.include_router(flows.router, prefix="/api/flows", tags=["多流程配置化平台"], dependencies=_protected)
 
 
 @app.on_event("startup")
@@ -187,6 +213,15 @@ async def startup_event():
         # 幂等 seeding 预置角色
         from app.services.permission_service import ensure_builtin_roles
         await ensure_builtin_roles()
+        # 多流程配置化平台：首次启动导入 driver_entry 配置 + 迁移老三表（幂等）
+        try:
+            from app.flows.seed import bootstrap as seed_bootstrap
+            result = await seed_bootstrap()
+            logger.info(f"多流程配置平台初始化: {result}")
+            from app.flows.registry import get_flow_registry
+            await get_flow_registry().load(force=True)
+        except Exception as fe:
+            logger.warning(f"多流程配置平台初始化失败（不影响 RAG 主链）: {fe}")
     except Exception as e:
         logger.warning(f"PostgreSQL 初始化失败（评测功能不可用）: {e}")
 

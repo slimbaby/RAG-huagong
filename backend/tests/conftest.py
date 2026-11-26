@@ -19,6 +19,15 @@ def setup_test_env(monkeypatch):
     monkeypatch.setenv("CRAWLER_ENABLED", "false")
     monkeypatch.setenv("UPLOAD_DIR", "./test_uploads")
     monkeypatch.setenv("BM25_INDEX_PATH", "./test_bm25_index")
+    # 本机已有 HF 缓存时强制离线加载，避免单测依赖外网 / 代理（502 会让全套假失败）。
+    # 没有缓存的机器保持原行为，由 CI 的 @pytest.mark.model 跳过真实模型用例。
+    hf_hub = os.environ.get("HF_HUB_CACHE") or os.path.join(
+        os.environ.get("HF_HOME", os.path.join(os.path.expanduser("~"), ".cache", "huggingface")),
+        "hub",
+    )
+    if os.path.isdir(hf_hub):
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
 
 
 def pytest_collection_modifyitems(config, items):

@@ -22,6 +22,9 @@ BUILTIN_SCOPES = [
     {"scope_id": "safety", "name": "安全环保"},
     {"scope_id": "quality", "name": "质量"},
     {"scope_id": "general", "name": "综合"},
+    # 司机入园专用：只放园区入园制度 / 材料清单 / 常见问题，
+    # 司机能问「入园要带什么」，但看不到财务、生产等其它部门文档。
+    {"scope_id": "entry_public", "name": "入园公共须知"},
 ]
 
 # 系统预置角色（首次注册 / 初始化时按需插入 PG）
@@ -33,6 +36,17 @@ BUILTIN_ROLES = [
     {"role_id": "safety", "role_name": "安全环保", "scope_ids": ["safety"]},
     {"role_id": "quality", "role_name": "质量", "scope_ids": ["quality"]},
     {"role_id": "general_viewer", "role_name": "综合查看", "scope_ids": ["general"]},
+    # 司机入园专用角色：仅可见「入园公共须知」scope。
+    # 若给空 scope，retrieval_node 会直接短路，司机问「入园要带什么材料」
+    # 在 RAG 侧拿不到任何内容，与「只读问题留在知识库问答」的决策冲突。
+    {"role_id": "driver", "role_name": "司机", "scope_ids": ["entry_public"]},
+    # 配置后台角色：只用于管理流程配置，禁止出现在 applicant/reviewer 列表（§7.4）
+    {"role_id": "config_editor", "role_name": "流程配置编辑", "scope_ids": ["general"]},
+    {"role_id": "config_publisher", "role_name": "流程配置发布", "scope_ids": ["general"]},
+    # 后续流程示例角色
+    {"role_id": "finance_user", "role_name": "财务经办", "scope_ids": ["finance"]},
+    {"role_id": "warehouse_user", "role_name": "仓库经办", "scope_ids": ["production_scheduling"]},
+    {"role_id": "qc_user", "role_name": "质检经办", "scope_ids": ["quality"]},
 ]
 
 
@@ -51,6 +65,18 @@ async def ensure_builtin_roles():
                 """,
                 r["role_id"], r["role_name"], json.dumps(r["scope_ids"]),
             )
+        # 升级迁移：ON CONFLICT DO NOTHING 不会更新已存在的角色记录。
+        # 旧版本 driver 的 scope_ids 是 []，不迁移会导致「入园公共须知」
+        # 永远不生效。这里只修空值，不覆盖管理员后来手工调整过的权限。
+        import json
+        await conn.execute(
+            """
+            UPDATE roles SET scope_ids = $1::jsonb
+            WHERE role_id = 'driver'
+              AND (scope_ids IS NULL OR scope_ids::text IN ('[]', 'null', ''))
+            """,
+            json.dumps(["entry_public"]),
+        )
 
 
 SERVICE_ROLE = {"role_id": "service", "role_name": "服务账号", "scope_ids": ["all"]}
@@ -62,7 +88,9 @@ async def get_user_role(username: str) -> Optional[dict]:
     三种情形：
     - 服务账号（settings.SERVICE_ACCOUNTS 显式白名单，如评测 runner 的
       eval_runner）：不入库，直接授予 service 角色；
-    - users 表中存在但未分配角色：向后兼容按 admin 处理（记 warning）；
+    - users 表中存在但未分配角色：返回 unassigned 最小权限（无任何 scope）。
+      此前向后兼容回落 admin，在单用户部署下无害，但入园预约引入批量司机
+      账号后，任何漏配角色的账号都会直接拿到全量权限，故改为最小权限；
     - users 表中不存在的用户名：返回 None，调用方应拒绝访问。
       此前该情形回落 admin——任何持有效签名 token 的幽灵用户名
       都能获得全量权限，属越权通道。
@@ -99,13 +127,14 @@ async def get_user_role(username: str) -> Optional[dict]:
                 "role_name": row["role_name"],
                 "scope_ids": scope_ids,
             }
-        # 无角色记录：仅对 users 表中真实存在的老用户向后兼容为 admin
+        # 无角色记录：仅确认 users 表中真实存在该用户，且只给最小权限。
+        # 绝不回落 admin —— 司机账号漏配角色时不能变成管理员。
         exists = await conn.fetchval(
             "SELECT 1 FROM users WHERE username = $1", username
         )
     if exists:
-        logger.warning(f"用户 {username} 存在但未分配角色，向后兼容按 admin 处理")
-        return {"role_id": "admin", "role_name": "管理员", "scope_ids": ["all"]}
+        logger.warning(f"用户 {username} 存在但未分配角色，按最小权限处理")
+        return {"role_id": "unassigned", "role_name": "未分配角色", "scope_ids": []}
     return None
 
 
