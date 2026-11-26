@@ -54,7 +54,7 @@
 
 ### P1.6 `is` 和 `==` 的区别
 
-**答**：`is` 比较对象身份（`id()`），`==` 调用 `__eq__` 比较值。小整数/短字符串有缓存池，`is` 偶然为 True 是坑，判断值一律用 `==`；判断 `None/True/False` 用 `is`（单例）。
+**答**：`is` 比较对象身份（`id()`）≈ JS `===`（引用比较），`==` 调用 `__eq__` 比较值。小整数/短字符串有缓存池，`is` 偶然为 True 是坑，判断值一律用 `==`；判断 `None/True/False` 用 `is`（单例）。
 
 ### P1.7 闭包是什么？装饰器本质？
 
@@ -80,9 +80,68 @@
 
 **本项目落点（诚实短板，主动讲很加分）**：`api/chat.py` SSE 生成器外层是 `except Exception`，客户端断网时抛的是 `GeneratorExit`，**兜不住、没有清理逻辑**；而且 `save_turn` 在生成器最末尾（`:556`），断在中途这一轮服务端零记录。正确修法：请求进来先落问句，`finally` 里存已生成的部分答案 + `status=interrupted`；`_run_graph` 是 `create_task` 起的（`:521`），断连时要 cancel。**这道题能把「懂生成器协议」和「知道自己系统的缺口」一起讲出来。**
 
+### P1.10 字符串操作：`join` vs `+`、`split`、`encode/decode`、`f-string`
+
+**答**：拼接大量字符串用 `''.join(list)` 而非循环 `+=`（`+=` 每次建新对象，O(n²)，`join` 一次分配 O(n)）；`split()` 默认按任意空白切、`split('x')` 按字符；`f-string`（3.6+）性能最好且可读性最强，比 `%` 和 `.format()` 都快。`encode()` 是 str→bytes（指定编码），`decode()` 是 bytes→str；Python3 里 str 是 Unicode、bytes 是字节流，两者不可直接混用（`'a' + b'b'` 会 TypeError）。
+
+**本项目落点（强证据）**：`tools/csv_parser.py:30-40` 做**编码检测**——先 `chardet.detect(raw_data)` 猜编码，猜不准就按 `['gbk', 'gb2312', 'gb18030', 'latin1']` 逐个 `decode()` 尝试，全失败再 `utf-8` 兜底。化工园区的 CSV 常见 GBK 编码，**这就是 `str/bytes` 编码问题在生产里的真实形态**。追问「乱码怎么办」→ 讲 chardet 探测 + 多编码降级尝试这条链。
+
+### P1.11 列表推导式 vs 生成器表达式
+
+**答**：`[x for x in ...]` 是列表推导，**立即求值、一次性占满内存**；`(x for x in ...)` 是生成器表达式，**惰性、常数内存**，但只能遍历一次。能喂给 `sum/min/max/any/all` 这类「一次消费」的场景时，用生成器表达式省内存；需要反复索引/多次遍历就用列表。
+
+**本项目落点**：`agents/nodes.py:575` `filtered_results.sort(key=lambda x: x.get("reranker_score", 0), reverse=True)` 里的 `lambda` 就是「临时的、只用一次的函数」；reranker 对 20 条候选打分后排序，数据量小所以直接全排，不需要生成器。可以顺势讲一句：「候选只有 20 条，全排开销可忽略；真到单路召回上千条，我会换成 `heapq.nlargest(5, ...)` 只留 topK」——这是个能主动抛出的优化点。
+
+### P1.12 `global` / `nonlocal` / 作用域 LEGB
+
+**答**：变量查找顺序 LEGB——**L**ocal（函数内）→ **E**nclosing（外层闭包）→ **G**lobal（模块）→ **B**uilt-in（内建）。`global` 声明「我要读写模块级变量」；`nonlocal` 声明「我要读写**闭包外层**的变量」（不落到 global）。没有 `nonlocal`，闭包内对 `x` 赋值会当成新建局部变量，导致外层变量读不到。
+
+**本项目落点**：项目基本**不用** `global`（grep 零命中）——因为配置走 `@lru_cache` 单例、状态走 LangGraph state 流转，不靠模块级可变全局。可以讲：「少用 global 是刻意的，全局可变状态难测试、难追踪，我们用依赖注入（`deps`）+ 状态机代替」。闭包捕获外层变量的例子见 P1.7 的 `_on_done`。
+
+### P1.13 字典底层：哈希表、哈希冲突、`__hash__`/`__eq__`
+
+**答**：dict 底层是**哈希表**（开放寻址法解决冲突），键先 `hash(key)` 得到哈希值定位桶，冲突时线性探测。键必须可哈希（不可变 + 实现 `__hash__`）；两个对象 `==` 相等则 `hash` 必须相等（哈希一致性），所以重写 `__eq__` 必须同步重写 `__hash__`。负载因子过高会**扩容重排**（O(n) 一次性开销）。
+
+**本项目落点**：`vectorstore/hybrid_store.py` 里 `allowed_doc_ids` 用 `set` 做 O(1) 权限过滤——本质就是哈希表；`core/model_config.py:10` 的 `class ModelProvider(str, Enum)` 继承了 `str` 所以可直接当 dict 的 key。追问「set 为什么不能放 list」→ list 可变不可哈希。
+
+### P1.14 文件操作：`open` 的 mode、二进制 vs 文本、`seek`/`tell`
+
+**答**：`open(path, mode, encoding)`，mode 里 `r/w/a` + `b`（二进制）+ `+`（读写）。文本模式会做换行转换和 `encoding` 解码，二进制模式拿到原始字节。读大文件别 `read()`/`readlines()` 一次吃进内存，用迭代器逐行 `for line in f`。`seek`/`tell` 做随机定位（二进制模式才精确）。
+
+**本项目落点**：`tools/pdf_parser.py`、`bm25_index.py:110-118` 用**原子写**（先写 `.tmp` 再 `os.replace`）避免写一半崩溃损坏索引；`tools/csv_parser.py` 读 CSV 时带 `encoding` + 编码检测（呼应 P1.10）。「为什么原子写」→ 进程中途被杀，`.tmp` 不完整也不影响旧文件，`os.replace` 是原子操作。
+
+### P1.15 正则 `re` 模块：`match`/`search`/`findall`/贪婪
+
+**答**：`match` 从**开头**匹配，`search` 任意位置找第一个，`findall` 找全部（返回列表），`finditer` 返回迭代器（省内存）。`(.*)` 贪婪、`(.*?)` 非贪婪。`re.compile` 预编译复用 pattern 提性能。常用 `\d \w \s`、`[]` 字符类、`()` 分组（`group(1)` 取第一组）。
+
+**本项目落点（正则用得多，务必背一个具体场景）**：
+- `services/citation_service.py:62` `re.finditer(self.CITATION_PATTERN, answer)` 解析答案里的 `[来源N]` 引用，`match.group(1)` 取来源编号——**这是 RAG 引用标注的核心，正则直接决定引用能不能被正确解析**；
+- `services/query_rewriter.py:50` `colloquial_patterns` 做口语化清洗（"咋回事"→"怎么回事"这类规则替换）。
+
+**追问「贪婪 vs 非贪婪」**：`re.findall(r'<.*>', s)` 会吞到最后一个 `>`，改成 `<.*?>` 才停在第一个 `>`。
+
+### P1.16 `lambda` / `map`/`filter`/`reduce` / `sorted` 的 `key`
+
+**答**：`lambda x: expr` 是匿名单表达式函数，适合「只用一次的短函数」当 `sorted(key=)`、`map/filter` 的回调；复杂逻辑还是写 `def`（可读性）。`map`/`filter` 返回**惰性迭代器**，要 `list()` 包一层才有值。`sorted(iterable, key=..., reverse=...)` 的 `key` 函数对每个元素只算一次。
+
+**本项目落点**：`agents/nodes.py:575` `sort(key=lambda x: x.get("reranker_score", 0), reverse=True)` 按 reranker 分数降序——`key` 用一个 lambda 取嵌套字段，是 `sorted` 的典型用法。追问「`key` 算几次」→ 每个元素一次，内部用 Schwartzian transform（先算 key 再排序），不是每比较一次算一次。
+
 ---
 
 ## P2 · 并发与异步（本项目最强区，重点准备）
+
+> **先记住这张总表**（面试官问「进程/线程/协程区别」直接背）：
+>
+> | | 进程 | 线程 | 协程 |
+> |---|---|---|---|
+> | 调度者 | 操作系统 | 操作系统 | 程序/事件循环 |
+> | 共享内存 | 否（隔离） | 是（同进程） | 是（同线程） |
+> | 切换开销 | 大 | 中 | 极小（用户态） |
+> | 并行能力 | 真并行（多核） | CPU 密集受 GIL 限制 | 无（单线程协作） |
+> | 适用 | CPU 密集/隔离 | IO 密集（传统） | 高并发 IO 密集 |
+> | 本项目 | RAGAS 子进程隔离 | `to_thread` 丢 CPU 活 | async 客户端 + SSE |
+>
+> 一句话：**CPU 密集 → 进程/线程池（C 扩展释放 GIL 能真并行）；IO 密集高并发 → 协程**。项目三种全用了，正好能证明「不是只会 async」。
 
 ### P2.1 GIL 是什么？多线程能不能并行？怎么绕？
 
@@ -132,7 +191,11 @@ def _spawn_background(coro, *, name: str) -> asyncio.Task:
 
 ### P2.6 进程间通信 / 子进程
 
-**本项目落点**：`backend/ragas_worker.py` 用 **stdin/stdout 传 JSON** 做主进程与 RAGAS 评分子进程的通信（不走 `multiprocessing.Queue`），3 个 worker 并发、超时 600s kill、崩溃降级记 0 分。理由：RAGAS 依赖 torch/uvloop/nest_asyncio，主进程直接 import 会 segfault，用进程隔离把崩溃半径收窄。还用全 0 向量的 `DummyEmbeddings` 桩骗过 RAGAS 的 embedding 初始化，省掉加载 1GB 模型。
+**答（先讲 `multiprocessing` 模块本身）**：`multiprocessing.Process` 起独立进程、`Pool` 做进程池（`map`/`apply_async`）、`Queue`/`Pipe` 做进程间通信、`Manager` 提供跨进程共享对象。关键点：**每个进程有独立内存空间，全局变量不共享**（Windows 下尤其注意 `if __name__ == "__main__"` 保护，否则子进程会重复 `fork` 主模块导致无限递归）；`Queue` 底层用 pickle 序列化 + 管道传输，传大对象有开销。CPU 密集任务要真并行就靠它（绕过 GIL）。
+
+**本项目落点（诚实：项目没用 `multiprocessing` 模块，但用了更简单的进程隔离）**：`backend/ragas_worker.py` 用 **stdin/stdout 传 JSON** 做主进程与 RAGAS 评分子进程的通信（不走 `multiprocessing.Queue`），3 个 worker 并发、超时 600s kill、崩溃降级记 0 分。理由：RAGAS 依赖 torch/uvloop/nest_asyncio，主进程直接 import 会 segfault，用进程隔离把崩溃半径收窄。还用全 0 向量的 `DummyEmbeddings` 桩骗过 RAGAS 的 embedding 初始化，省掉加载 1GB 模型。
+
+**追问「为什么不用 `multiprocessing.Pool`」**：可以答——我们只需要「主进程派发 + 子进程算完回传 JSON」的简单协议，stdin/stdout 已经够用且**不引入 pickle 序列化的安全/兼容问题**；真要 CPU 密集批处理（比如批量 embedding）再上 `ProcessPoolExecutor` 更合适。`if __name__ == "__main__"` 这个保护在我们项目里是 `tools/generate_manufacturing_data.py:240`（数据生成脚本入口）。
 
 ### P2.7 异步上下文管理器 / 超时控制
 
@@ -177,7 +240,13 @@ def _spawn_background(coro, *, name: str) -> asyncio.Task:
 
 **本项目落点**：`core/model_config.py:10,17` 用 `class ModelProvider(str, Enum)` —— **继承 `str` 的 Enum 可以直接当字符串用**（`use_enum_values=True`），这是鸭子类型的实用例子；`tools/base_tool.py` 那层是抽象基类风格（全仓库只有 1 处 ABC）。
 
-### P3.5 上下文管理器 / `with` 原理 → 见 P2.7
+### P3.5 dataclass 细节：`field` / `frozen` / `__post_init__` / `slots`
+
+**答**：`@dataclass` 自动生成 `__init__/__repr__/__eq__`，省样板代码。`field(default=...)` 给默认值、`field(default_factory=list)` 避免可变默认值共享（呼应 P1.2）；`frozen=True` 生成不可变实例（`__setattr__` 抛异常，可哈希）；`__post_init__` 在 `__init__` 后做额外校验/派生字段；`slots=True`（3.10+）省内存。
+
+**本项目落点**：`evaluation/gate.py` 的 `@dataclass class GateConfig` 就是值对象——`min_overall_score: float = 7.0` 这类带默认值的配置字段，比手写 `__init__` 干净。追问「`frozen` 能干嘛」→ 不可变配置对象，防止运行中被改；「和 Pydantic BaseModel 区别」→ 见 P3.1 那张表：dataclass 不校验、开销低，BaseModel 校验 + 序列化，边界才用后者。
+
+### P3.6 上下文管理器 / `with` 原理 → 见 P2.7
 
 ---
 
@@ -260,6 +329,66 @@ def _spawn_background(coro, *, name: str) -> asyncio.Task:
 
 ---
 
+## P7 · 本次新增代码里的 Python 考点（2026-11-26）
+
+> 这一节只收「多流程平台 / 入园预约」新增代码里的真实落点，面试时可以直接指文件。老考点见 P1–P6。
+
+### P7.1 `TypedDict` / `dataclass` / `BaseModel` 怎么选？
+
+**答**：`TypedDict` 是**纯类型提示、运行时零开销**，适合 LangGraph state 这种「到处传、不做校验」的内部结构；`dataclass` 有默认值和 `__init__`，适合配置对象；`BaseModel` 在**边界**做运行时校验和序列化，适合 HTTP 请求/响应。
+
+**项目落点**：`agents/state.py` 的 `RAGState` / `AgentState` 用 `TypedDict`（新增 `flow_id` / `flow_slots` / `flow_payload` 等字段必须先声明，否则 LangGraph 合并时丢键）；`api/chat.py` 的 `ChatRequest` / `ChatResponse` 用 `BaseModel` 做入参校验与 OpenAPI 生成；`flows/model.py` 的 `FlowDefinition` 用普通 class 包配置，因为它要挂大量派生方法，不需要 dataclass 的字段语义。
+
+### P7.2 `ContextVar` 为什么能防「模型伪造身份」？
+
+**答**：`ContextVar` 是**按 Task/上下文隔离**的变量，不是全局变量；异步任务各自看到自己的副本，不会串。把 `username / session_id / slots` 绑进 `ContextVar`，工具函数只能读当前请求上下文，模型即使在自己的参数里写 `{"username": "admin"}` 也改不了它。
+
+**项目落点**：`flows/context.py::bind()` 在请求入口绑定，工具层通过 `current_username()` / `current_slots()` 读取；`_prepare_flow_request()` 同时绑定旧 `entry_context`，兼容老链路。这是「AI 只读、不能越权」的实现基础之一。
+
+### P7.3 正则也会成为安全漏洞：ReDoS 怎么防？
+
+**答**：灾难性回溯来自「含量词的分组再被量词修饰」（如 `(a+)+b`）、连续无限量词、超大重复下限。防御不是禁用所有高级语法，而是**只拦危险结构 + 限制长度 + 编译期探针**。
+
+**项目落点**：`flows/model.py::compile_safe_regex()` 用 `_DANGEROUS_RE` 拦上述结构，`MAX_REGEX_LEN=400`；`flows/registry.py` 加载配置时对每条规则做编译探针，单条失败只跳过该条并告警，不拖垮整个流程。注意非捕获组 `(?:...)` 和前后向断言 `(?<!...)` 是合法且常用的，不能一刀切禁掉——第一版就因为拦得太宽误伤了正常配置。
+
+### P7.4 `asyncpg` 连接池为什么必须 `async with pool.acquire()`？
+
+**答**：连接是有限资源，手动 `acquire/release` 一旦中间抛异常就会泄漏；`async with` 保证**异常路径也归还连接**。另外不要在持有连接时做长耗时操作（调 LLM、读大文件），会把池子占满。
+
+**项目落点**：`flows/service.py` 所有写库函数都是 `pool = await get_pool()` + `async with pool.acquire() as conn:`；LLM 调用在 `agents/nodes.py`，不在连接上下文里。`review_application()` 里「查单据 → 校验 → 更新 → 写审计」在一个连接内完成，避免竞态。
+
+### P7.5 乐观锁怎么实现？和悲观锁怎么选？
+
+**答**：乐观锁不加锁，更新时带版本条件：`UPDATE … SET …, revision = revision + 1 WHERE id = $1 AND revision = $2`，受影响行数为 0 就说明被别人改过，返回 409 让前端合并。适合**冲突少、读多写少**的配置编辑；冲突多或临界区长才用 `SELECT … FOR UPDATE`。
+
+**项目落点**：`flows/store.py::save_draft()` 用 `draft_revision` 列做乐观锁（请求带 `expect_draft_revision`），冲突时返回当前草稿与 diff；申请单提交用状态条件更新（`WHERE status='draft'`），天然防止重复提交。
+
+### P7.6 `json.dumps` 的 `ensure_ascii` / `default` 什么时候必须写？
+
+**答**：`ensure_ascii=False` 让中文不被转成 `\uXXXX`，日志和 diff 才可读；`default=str` 处理 `datetime / Decimal / UUID` 这类 JSON 不认识的对象，否则直接 `TypeError`。反过来，`json.loads` 对坏数据要 try/except，不能假设库里一定是合法 JSON。
+
+**项目落点**：`flows/service.py::_dump()` 统一 `ensure_ascii=False, default=str`；`_load()` 对字符串做容错解析，解析失败返回 `{}`。配置 diff、审计 detail、SSE 事件都走这套，避免「线上中文全变转义码」。
+
+### P7.7 异常该在哪一层翻译？
+
+**答**：底层抛**领域异常**（带业务语义和 HTTP 状态码），API 层统一注册 handler 翻译成响应；不要让 `asyncpg` 的 `UniqueViolationError` 直接冒到用户面前，也不要在每层都 `try/except` 一遍。
+
+**项目落点**：`flows/service.py::FlowError(message, status_code)`；`main.py` 注册 `FlowError` / `FlowStoreError` 的 handler，统一返回 `{"detail": ...}`。旧入园的 `EntryError` 通过 `entry_compat.py` 继承原异常类型，复用同一个 handler，旧前端响应结构不变。
+
+### P7.8 幂等怎么做？启动时重复执行会不会写脏数据？
+
+**答**：幂等 = 同样的输入执行多次，结果一致。常见做法是「先查后写 + 唯一约束 + 状态条件更新」，启动任务还要能识别「已经做过」。
+
+**项目落点**：`flows/seed.py::bootstrap()` 先查 `get_published(SEED_FLOW_ID)`，有发布版就跳过；`migrate_legacy_entry()` 先判断 `entry_applications` 是表还是视图，是视图就说明已迁移；`submit_application()` 用 `WHERE status='draft'`，重复提交返回 409 而不是插两条。
+
+### P7.9 生成器里 `except Exception` 为什么兜不住断连？
+
+**答**：客户端断连时 SSE 生成器收到的是 `GeneratorExit`，它继承 `BaseException` 而不是 `Exception`；`except Exception` 兜不住，`finally` 才会执行。要在 `finally` 里做清理和「保存已生成部分」；`create_task` 起的后台任务还要显式 `cancel()`。
+
+**项目落点**：`api/chat.py` 的 SSE `event_generator()` 在 `finally` 里结束 trace / 清理队列；`_run_graph` 用 `create_task` 启动，异常通过队列哨兵传递。这是老代码就存在的边界，新增流程链路复用了同一套生成器，没有另起一套。
+
+---
+
 ## 附录 · 10 分钟速记卡
 
 **必背 6 个「项目锚点」（说出口就赢）**
@@ -270,14 +399,17 @@ def _spawn_background(coro, *, name: str) -> asyncio.Task:
 5. 两种单例：`@lru_cache`（同步）/ `asyncio.Lock`（异步）（`config.py:234` / `checkpointer.py:29`）
 6. SSE 是生成器，`GeneratorExit` 是 `BaseException`，`except Exception` 兜不住（`chat.py`）
 
-**必背 4 句结论**
+**必背 6 句结论**
 - GIL：IO 密集用 asyncio/线程池，CPU 密集靠 C 扩展释放 GIL 或多进程，重活用子进程隔离。
 - GC：引用计数为主 + 标记清除解循环引用 + 分代回收降成本。
 - 生成器：惰性、常数内存、只能遍历一次；异步生成器用 `async for` 不能 `await`。
 - 装饰器：闭包 + `@` 语法糖，务必 `functools.wraps`。
+- 进程/线程/协程：CPU 密集→进程池（真并行）、IO 密集高并发→协程、同步 CPU 活→`to_thread`。
+- 正则/编码：`finditer` 解析 `[来源N]`（citation_service.py:62）、chardet 检测 + gbk/gb2312 降级（csv_parser.py:30-40）。
 
 **诚实短板清单（主动讲比被挖出来体面）**
 - 没有用 `__slots__` / `deepcopy`（对象量小，不是瓶颈）。
+- 没有用 `multiprocessing` 模块（RAGAS 用 stdin/stdout 传 JSON 的子进程方案替代）。
 - SSE 断连缺 `finally` 清理、`save_turn` 在末尾导致整轮不入库。
 - 全局单例靠 autouse fixture 兜底清理，说明测试对全局状态敏感。
 - `uv.lock` 与 `pyproject.toml` 需手工保持同步（CI 未加 `uv lock --check`）。
