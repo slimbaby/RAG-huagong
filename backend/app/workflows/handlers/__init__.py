@@ -35,7 +35,10 @@ async def write_order(state: WorkflowState, step: StepDef) -> Dict[str, Any]:
     """
     run_id = state.get("run_id", "")
     step_id = step.id
-    idempotency_key = f"{run_id}:{step_id}"
+    # P0: 优先用稳定的业务幂等键（跨重试/重复提交不变）再拼 step_id；
+    #     无业务键时回退 run_id:step_id（兼容旧流程实例）。
+    idem_base = (state.get("metadata") or {}).get("idempotency_key")
+    idempotency_key = f"{idem_base}:{step_id}" if idem_base else f"{run_id}:{step_id}"
     slots = _slots(state)
 
     quantity = slots.get("quantity", 0)

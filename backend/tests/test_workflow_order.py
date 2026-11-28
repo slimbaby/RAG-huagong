@@ -494,13 +494,18 @@ async def test_chat_tool_calling_closes_the_loop(erp_dir, order_checkpointer, mo
     set_deps_provider(lambda: {"llm_client": llm})
     FlowRegistry().load(force=True)
 
-    result = await _chat_with_tools(
-        llm,
-        [{"role": "user", "content": "帮我下一个11.30号发货的体积5吨的甲烷订单"}],
-        TOOLS_SCHEMA,
-        TOOL_REGISTRY,
-        max_rounds=4,
-    )
+    from app.flows import context as fctx
+    role_tokens = fctx.bind("tester", "s-tool", role_id="admin")
+    try:
+        result = await _chat_with_tools(
+            llm,
+            [{"role": "user", "content": "帮我下一个11.30号发货的体积5吨的甲烷订单"}],
+            TOOLS_SCHEMA,
+            TOOL_REGISTRY,
+            max_rounds=4,
+        )
+    finally:
+        fctx.reset(role_tokens)
 
     names = [t["name"] for t in result["tool_trace"]]
     assert names == ["create_order", "resume_order"], f"工具调用序列不对: {names}"
@@ -551,3 +556,119 @@ async def test_resume_order_requires_payload():
 
     payload = json.loads(await tool_resume_order("some-run"))
     assert "error" in payload
+
+
+# ── P0: 重复下单幂等键 ──────────────────────────────
+
+def test_business_idempotency_key_stable_across_retries():
+    """同一用户、同一意图（标点/空格差异忽略）必须得到同一个键；
+    不同用户或不同内容必须是不同键。run_id 随机性不得再导致重复建单。"""
+    from app.tools.workflow_tools import _business_idempotency_key
+
+    k1 = _business_idempotency_key("methane_order", "帮我订 5 吨甲烷，客户是A厂", "alice")
+    k2 = _business_idempotency_key("methane_order", "帮我订5吨甲烷客户是A厂", "alice")
+    k3 = _business_idempotency_key("methane_order", "帮我订 5 吨甲烷，客户是A厂", "bob")
+    k4 = _business_idempotency_key("methane_order", "帮我订 5 吨甲烷，客户是B厂", "alice")
+
+    assert k1 == k2, "标点/空格差异不应产生新幂等键"
+    assert k1 != k3, "不同用户的相同请求不得撞键"
+    assert k1 != k4, "不同内容的请求不得撞键"
+
+
+@pytest.mark.asyncio
+async def test_create_order_writes_business_key_to_state(monkeypatch):
+    """create_order 必须把稳定业务幂等键写进 state.metadata，
+    handler 才能跨重试去重（而非依赖每次新建的随机 run_id）。"""
+    import app.tools.workflow_tools as wt
+    from app.flows import context as fctx
+
+    captured = {}
+
+    class FakeGraph:
+        async def ainvoke(self, initial, config=None):
+            captured.update(initial)
+            return {"status": "running", "slots": {}, "step_results": {}}
+
+        async def aget_state(self, config=None):
+            class S:
+                values = {}
+            return S()
+
+    class FakeFlow:
+        id = "methane_order"
+        version = 1
+
+        class _Step:
+            id = "collect"
+        steps = [_Step()]
+
+    class FakeRegistry:
+        def get(self, flow_id, version):
+            return FakeFlow()
+
+    class FakeEngine:
+        def get_graph(self, *a, **kw):
+            return FakeGraph()
+
+    async def fake_checkpointer():
+        return object()
+
+    monkeypatch.setattr("app.workflows.loader.get_flow_registry", lambda: FakeRegistry())
+    monkeypatch.setattr("app.workflows.engine.get_workflow_engine", lambda: FakeEngine())
+    monkeypatch.setattr("app.workflows.checkpointer.get_checkpointer", fake_checkpointer)
+    monkeypatch.setattr("app.workflows.checkpointer.extract_interrupt_payloads", lambda s: [])
+
+    tokens = fctx.bind("alice", "s1", role_id="admin", user_input="下一个5吨甲烷订单")
+    try:
+        await wt.tool_create_order("下一个5吨甲烷订单", flow_id="methane_order")
+    finally:
+        fctx.reset(tokens)
+
+    meta = captured.get("metadata") or {}
+    assert meta.get("idempotency_key"), "未写入业务幂等键"
+    from app.tools.workflow_tools import _business_idempotency_key
+    assert meta["idempotency_key"] == _business_idempotency_key(
+        "methane_order", "下一个5吨甲烷订单", "alice"
+    )
+
+
+# ── P0: 提示注入防护 ──────────────────────────────
+
+def test_prompt_templates_isolate_external_content():
+    """检索片段与用户问题必须用标签隔离，且声明其中的指令一律不得执行。"""
+    from app.prompts.rag import (
+        RAG_PROMPT_WITH_CITATION_AND_TIME,
+        GENERAL_PROMPT,
+        BUSINESS_PROMPT,
+        COMPARISON_PROMPT,
+    )
+
+    templates = [
+        RAG_PROMPT_WITH_CITATION_AND_TIME,
+        GENERAL_PROMPT,
+        BUSINESS_PROMPT,
+        COMPARISON_PROMPT,
+    ]
+    for tpl in templates:
+        assert "安全约束" in tpl, "缺少安全约束声明"
+        assert "<question>" in tpl and "{question}" in tpl, "用户问题未隔离"
+    for tpl in (templates[0], templates[3]):
+        assert "<reference>" in tpl and "{context}" in tpl, "检索资料未隔离"
+
+
+@pytest.mark.asyncio
+async def test_create_order_rejects_unauthorized_role():
+    """driver 等只读角色即使被提示注入诱导，也不能通过工具层下单。"""
+    from app.flows import context as fctx
+    from app.tools.workflow_tools import tool_create_order
+
+    tokens = fctx.bind("driver_user", "s3", role_id="driver")
+    try:
+        result = __import__("json").loads(
+            await tool_create_order("帮我下一个5吨甲烷订单", flow_id="methane_order")
+        )
+    finally:
+        fctx.reset(tokens)
+
+    assert result.get("started") is False
+    assert "无权" in result.get("reason", "")

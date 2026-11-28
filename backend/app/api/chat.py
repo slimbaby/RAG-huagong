@@ -381,6 +381,7 @@ async def _prepare_flow_request(request: "ChatRequest", user: CurrentUser,
         flow_id=decision.get("flow_id") or "", action=decision.get("action") or "",
         user_input=request.question, definition=decision.get("definition"),
         version=decision.get("definition_version") or 0,
+        role_id=user.role_id,  # P0: 工具层据此做角色鉴权，防提示注入越权下单
     )
     entry_tokens = _bind_entry(user.username, session_id, slots=slots,
                                entry_action=entry_action, user_input=request.question)
@@ -644,9 +645,10 @@ async def chat_query(request: ChatRequest, user: CurrentUser = Depends(get_curre
                 status="error",
                 error_message=str(e),
             )
+        # P0: 不把内部异常文本回显给客户端（可能含 DSN / 密钥片段）
         return ChatResponse(
             task_id="error",
-            answer=f"处理问题时出现错误: {str(e)}",
+            answer="服务处理失败，请稍后重试",
             optimization={"original": request.question, "rewritten": request.question, "type": "error"}
         )
     finally:
@@ -750,9 +752,12 @@ async def chat_query_stream(request: ChatRequest, user: CurrentUser = Depends(ge
         entry_action = False
 
     token_queue: asyncio.Queue = asyncio.Queue()
+    graph_error: Exception | None = None  # 后台图异常经此传给 SSE 生成器（P0: 防止异常被吞 + 流挂死）
+    graph_task: asyncio.Task | None = None  # 外层持有引用，客户端断开时可取消
 
     async def _run_graph(initial_state, accumulated_state):
-        """后台协程：执行 graph，收集步骤事件，完成后放哨兵到 token_queue"""
+        """后台协程：执行 graph，收集步骤事件；无论成功/失败/取消都必须放哨兵"""
+        nonlocal graph_error
         from ..agents.graph import extract_span_outputs
         step_events = []
         from ..tracing.tracer import _mask_text
@@ -763,26 +768,35 @@ async def chat_query_stream(request: ChatRequest, user: CurrentUser = Depends(ge
                                       "entry_action": entry_action})
             if tracer else contextlib.nullcontext()
         )
-        with root_cm as root_span:
-            if root_span is not None:
-                root_span.set_attribute("includes_sse_flush", True)
-            async for chunk in graph.astream(initial_state):
-                for node_name, updates in chunk.items():
-                    accumulated_state.update(updates)
-                    logger.info(f"[run_graph] 节点完成: {node_name}")
-                    step_data = extract_span_outputs(node_name, updates, accumulated_state)
-                    step_events.append({
-                        "type": "step",
-                        "node": node_name,
-                        "status": "completed",
-                        "data": step_data,
-                    })
-        token_queue.put_nowait(None)  # 哨兵：graph 全部完成
+        try:
+            with root_cm as root_span:
+                if root_span is not None:
+                    root_span.set_attribute("includes_sse_flush", True)
+                async for chunk in graph.astream(initial_state):
+                    for node_name, updates in chunk.items():
+                        accumulated_state.update(updates)
+                        logger.info(f"[run_graph] 节点完成: {node_name}")
+                        step_data = extract_span_outputs(node_name, updates, accumulated_state)
+                        step_events.append({
+                            "type": "step",
+                            "node": node_name,
+                            "status": "completed",
+                            "data": step_data,
+                        })
+        except asyncio.CancelledError:
+            # 客户端断开/服务关停导致的取消：正常传播，不伪装成业务错误
+            raise
+        except Exception as e:
+            graph_error = e
+            logger.error(f"[run_graph] 图执行失败: {e}", exc_info=True)
+        finally:
+            # P0: 哨兵必须在所有路径写入，否则 event_generator 会永久阻塞在 queue.get()
+            token_queue.put_nowait(None)
         logger.info(f"[run_graph] graph 执行完成, 共 {len(step_events)} 个步骤")
         return step_events
 
     async def event_generator():
-        nonlocal trace_id
+        nonlocal trace_id, graph_task
         # 两可句：后端下发候选，前端只渲染；不调模型、不跑检索、不写库
         if decision.get("needs_choice"):
             choice = {
@@ -833,7 +847,10 @@ async def chat_query_stream(request: ChatRequest, user: CurrentUser = Depends(ge
                     logger.info(f"[stream] token #{token_count}: {token!r}")
                 yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
+            # 等后台图真正结束；图内异常已从 graph_error 带出，转成 SSE error 事件
             step_events = await graph_task
+            if graph_error is not None:
+                raise graph_error
 
             # 发送步骤事件（在所有 token 之后）
             for event in step_events:
@@ -900,8 +917,13 @@ async def chat_query_stream(request: ChatRequest, user: CurrentUser = Depends(ge
             logger.error(f"SSE聊天查询失败: {e}", exc_info=True)
             if tracer and trace_id:
                 tracer.end_trace(trace_id=trace_id, status="error", error_message=str(e))
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            # P0: 不把内部异常文本回显给客户端，只给固定文案 + trace_id 便于排查
+            yield f"data: {json.dumps({'type': 'error', 'message': '服务处理失败，请稍后重试', 'trace_id': trace_id}, ensure_ascii=False)}\n\n"
         finally:
+            # P0: 客户端断开（GeneratorExit/CancelledError）时取消后台图，避免继续下单/写记忆/烧 token
+            if graph_task is not None and not graph_task.done():
+                graph_task.cancel()
+                logger.info("[stream] 客户端断开或服务关闭，已取消后台 graph 任务")
             _reset_flow(_flow_tokens)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

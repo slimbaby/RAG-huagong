@@ -9,8 +9,10 @@
 3. 引擎侧的 LLM 客户端与RAG 侧共用单例，不额外占用资源。
 """
 
+import hashlib
 import json
 import logging
+import re
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,25 @@ def _looks_like_read_only(user_input: str) -> bool:
     return any(h in text for h in _READ_ONLY_HINTS)
 
 
+_PUNCT_RE = re.compile(r"[\s,，。.!！?？:：;；'\"`~·\-_/\\()（）\[\]【】]+")
+
+
+def _business_idempotency_key(flow_id: str, user_input: str, username: str = "") -> str:
+    """计算稳定的业务幂等键。
+
+    run_id 每次调用都新建（流程实例唯一，用于 resume），不能作幂等键——
+    工具循环重试或用户重复提交会生成不同 run_id，导致 ERP 重复建单。
+    这里用「用户 + 流程 + 规范化原文」的哈希：同一业务意图跨请求得到同一个键，
+    由 handler 写入 ERP 的「幂等键」列做去重；不同用户即使下同样的单也不互相影响。
+
+    身份取自请求入口绑定的 contextvar，不接受 LLM 传参，避免伪造。
+    原文只留哈希、不落日志，避免 PII 泄露。
+    """
+    normalized = _PUNCT_RE.sub("", user_input or "").strip()
+    seed = f"{username}|{flow_id}|{normalized}".encode("utf-8")
+    return hashlib.sha256(seed).hexdigest()[:20]
+
+
 async def tool_create_order(
     user_input: str,
     flow_id: str = "methane_order",
@@ -43,6 +64,27 @@ async def tool_create_order(
         logger.info(f"[create_order] 疑似只读查询，不启动流程: {user_input[:40]}")
         return json.dumps(
             {"started": False, "reason": "这是查询类请求，不需要走下单流程"},
+            ensure_ascii=False,
+        )
+
+    # P0 角色闸门：身份来自请求入口 contextvar，不接受 LLM 传参。
+    # 防止提示注入（文档/用户问题里藏指令）诱导模型越权下单。
+    try:
+        from ..flows.context import role_id as _current_role
+        from ..core.config import get_settings
+        role = _current_role() or ""
+        allowed = set(get_settings().ORDER_TOOL_ALLOWED_ROLES or [])
+        if role != "admin" and role not in allowed:
+            logger.warning(f"[create_order] 角色 {role!r} 无下单权限，已拒绝")
+            return json.dumps(
+                {"started": False, "reason": "当前角色无权下单，请知悉管理员"},
+                ensure_ascii=False,
+            )
+    except Exception as e:
+        # 配置/上下文异常时 fail-closed：宁可拒绝，也不放行未知身份下单
+        logger.error(f"[create_order] 角色校验失败，拒绝下单: {e}")
+        return json.dumps(
+            {"started": False, "reason": "下单权限校验不可用，请稍后重试"},
             ensure_ascii=False,
         )
 
@@ -67,6 +109,14 @@ async def tool_create_order(
         if graph is None:
             return json.dumps({"error": f"流程图编译失败: {flow_id}"}, ensure_ascii=False)
 
+        # 身份从请求入口绑定的 contextvar 取，不接受 LLM 传参（防伪造）
+        try:
+            from ..flows.context import username as _current_username
+            username = _current_username() or ""
+        except Exception:
+            username = ""
+        idem_key = _business_idempotency_key(flow.id, user_input, username)
+
         run_id = new_run_id()
         config = {"configurable": {"thread_id": run_id}}
         initial = {
@@ -80,7 +130,8 @@ async def tool_create_order(
             "pending_approval": None,
             "status": "running",
             "error": None,
-            "metadata": {"source": "create_order_tool"},
+            # P0: 稳定业务幂等键写进 state，handler 写库时优先用它而非 run_id
+            "metadata": {"source": "create_order_tool", "idempotency_key": idem_key},
             "user_input": user_input.strip(),
             "pending_question": None,
         }
@@ -139,6 +190,7 @@ async def tool_resume_order(
         # 从 checkpoint 反查这个 run 属于哪个 flow
         graph = None
         flow_id = ""
+        owner = None
         for meta in registry.list_flows():
             candidate = registry.get(meta["id"], meta["version"])
             if candidate is None:
@@ -151,10 +203,21 @@ async def tool_resume_order(
             if values.get("run_id") == run_id:
                 graph = g
                 flow_id = candidate.id
+                owner = (values.get("metadata") or {}).get("username")
                 break
 
         if graph is None:
             return json.dumps({"error": f"流程实例不存在或已过期: {run_id}"}, ensure_ascii=False)
+
+        # P0: 仅发起人本人可续单；身份来自 contextvar，LLM 无法伪造
+        try:
+            from ..flows.context import username as _current_username, role_id as _current_role
+            me, my_role = _current_username() or "", _current_role() or ""
+        except Exception:
+            me, my_role = "", ""
+        if owner and my_role != "admin" and owner != me:
+            logger.warning(f"[resume_order] 拒绝越权续单: run_id={run_id} owner={owner} me={me}")
+            return json.dumps({"error": "无权恢复该流程实例"}, ensure_ascii=False)
 
         result = await graph.ainvoke(Command(resume=payload), config=config)
         snap = await graph.aget_state(config)

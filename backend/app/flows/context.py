@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional, Tuple
 from .model import FlowDefinition
 
 current_username: ContextVar[str] = ContextVar("flow_current_username", default="")
+current_role_id: ContextVar[str] = ContextVar("flow_current_role_id", default="")
 current_session_id: ContextVar[str] = ContextVar("flow_current_session_id", default="")
 current_slots: ContextVar[Dict[str, Any]] = ContextVar("flow_current_slots", default={})
 current_flow_id: ContextVar[str] = ContextVar("flow_current_flow_id", default="")
@@ -21,16 +22,18 @@ current_version: ContextVar[int] = ContextVar("flow_current_version", default=0)
 current_payload: ContextVar[Dict[str, Any]] = ContextVar("flow_current_payload", default={})
 
 _VARS = (
-    current_username, current_session_id, current_slots, current_flow_id,
+    current_username, current_role_id, current_session_id, current_slots, current_flow_id,
     current_action, current_user_input, current_definition, current_version, current_payload,
 )
 
 
 def bind(username: str, session_id: str = "", *, slots: Optional[Dict[str, Any]] = None,
          flow_id: str = "", action: str = "", user_input: str = "",
-         definition: Optional[FlowDefinition] = None, version: int = 0) -> Tuple[Token, ...]:
+         definition: Optional[FlowDefinition] = None, version: int = 0,
+         role_id: str = "") -> Tuple[Token, ...]:
     return (
         current_username.set(username or ""),
+        current_role_id.set(role_id or ""),
         current_session_id.set(session_id or ""),
         current_slots.set(dict(slots or {})),
         current_flow_id.set(flow_id or ""),
@@ -54,6 +57,10 @@ def reset(tokens: Optional[Tuple[Token, ...]]) -> None:
 
 def username() -> str:
     return current_username.get("")
+
+
+def role_id() -> str:
+    return current_role_id.get("")
 
 
 def session_id() -> str:

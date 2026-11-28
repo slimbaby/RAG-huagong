@@ -119,9 +119,9 @@ async def start_workflow(request: StartWorkflowRequest, user: CurrentUser = Depe
         "status": "running",
         "error": None,
         "metadata": {
-            "username": user.username,
-            "created_at": _now(),
             **(request.context or {}),
+            "username": user.username,   # P0: 服务端身份最后写入，禁止 context 伪造 owner
+            "created_at": _now(),
         },
         "user_input": request.user_input,
         "pending_question": None,
@@ -155,6 +155,7 @@ async def resume_workflow(run_id: str, request: ResumeWorkflowRequest, user: Cur
     config = {"configurable": {"thread_id": run_id}}
     graph = None
     flow_id = None
+    owner = None
     # 需要先知道 flow_id 才能取到对应的图
     registry = get_flow_registry()
     for flow in registry.list_flows():
@@ -169,11 +170,16 @@ async def resume_workflow(run_id: str, request: ResumeWorkflowRequest, user: Cur
         if values.get("run_id") == run_id:
             graph = g
             flow_id = candidate.id
+            owner = (values.get("metadata") or {}).get("username")
             break
 
     if graph is None:
         raise HTTPException(status_code=404, detail="流程实例不存在或已过期")
 
+    # P0 越权防护：仅流程发起人本人或管理员可恢复；审批还要校验审批角色。
+    # 修复前凭 run_id 即可 resume，任意用户传 approved:true 替他人审批下单。
+    if owner and user.role_id != "admin" and owner != user.username:
+        raise HTTPException(status_code=403, detail="无权恢复该流程实例")
     from langgraph.types import Command
 
     try:

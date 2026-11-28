@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # 应用配置
     APP_NAME: str = "LangGraph RAG知识库系统"
     APP_ENV: str = "development"
-    APP_DEBUG: bool = True
+    APP_DEBUG: bool = False  # P0: 生产默认关闭，避免异常信息回显
     APP_PORT: int = 8000
     APP_HOST: str = "0.0.0.0"
 
@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     WORKFLOW_CHECKPOINT_DB: str = "./checkpoints/workflows.db"  # LangGraph checkpoint 库
     WORKFLOW_APPROVAL_TIMEOUT_HOURS: int = 72   # 审批默认超时
     ERP_DATA_DIR: str = "./data"                # ERP 模拟数据目录（接真ERP 后废弃）
+    # P0: 允许通过 Agent 工具下单的角色白名单。默认最严：仅业务/管理角色。
+    # driver 等只读角色即使被提示注入诱导调用 create_order 也会被拒绝。
+    ORDER_TOOL_ALLOWED_ROLES: List[str] = ["admin", "production", "finance", "safety"]
 
     # 认证配置
     AUTH_ENABLED: bool = True

@@ -3,7 +3,8 @@
 存储：PostgreSQL（用例 + 报告）、Redis（任务状态）
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
+from .auth import CurrentUser, require_admin
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 import json
@@ -65,7 +66,8 @@ async def _update_eval_task(task_id: str, data: Dict):
 # ── API 端点 ──────────────────────────────────────────────────
 
 @router.post("/run", response_model=EvalRunResponse, summary="执行评测")
-async def run_evaluation(request: EvalRunRequest, background_tasks: BackgroundTasks):
+async def run_evaluation(request: EvalRunRequest, background_tasks: BackgroundTasks,
+                        admin: CurrentUser = Depends(require_admin)):
     task_id = str(uuid.uuid4())[:8]
     await _set_eval_task(task_id, {
         "status": "running",
@@ -76,7 +78,7 @@ async def run_evaluation(request: EvalRunRequest, background_tasks: BackgroundTa
 
 
 @router.get("/status/{task_id}", summary="查询评测状态")
-async def get_eval_status(task_id: str):
+async def get_eval_status(task_id: str, admin: CurrentUser = Depends(require_admin)):
     task = await _get_eval_task(task_id)
     if not task:
         raise HTTPException(404, "评测任务不存在")
@@ -84,7 +86,7 @@ async def get_eval_status(task_id: str):
 
 
 @router.get("/report/{eval_id}", summary="查看评测报告")
-async def get_eval_report(eval_id: str):
+async def get_eval_report(eval_id: str, admin: CurrentUser = Depends(require_admin)):
     from ..evaluation.report import EvalReport
     report = await EvalReport.load_from_db(eval_id)
     if not report:
@@ -93,21 +95,21 @@ async def get_eval_report(eval_id: str):
 
 
 @router.get("/reports", summary="评测报告列表")
-async def list_eval_reports():
+async def list_eval_reports(admin: CurrentUser = Depends(require_admin)):
     from ..evaluation.report import EvalReport
     reports = await EvalReport.list_from_db(limit=20)
     return {"reports": reports}
 
 
 @router.get("/dataset", summary="查看当前评测集")
-async def get_eval_dataset():
+async def get_eval_dataset(admin: CurrentUser = Depends(require_admin)):
     from ..evaluation.dataset import load_cases_from_db
     cases = await load_cases_from_db()
     return {"cases": [c.to_dict() for c in cases]}
 
 
 @router.put("/dataset", summary="更新评测集")
-async def update_eval_dataset(cases: List[Dict]):
+async def update_eval_dataset(cases: List[Dict], admin: CurrentUser = Depends(require_admin)):
     from ..evaluation.dataset import EvalCase, save_cases_to_db
     eval_cases = []
     for c in cases:
@@ -120,7 +122,7 @@ async def update_eval_dataset(cases: List[Dict]):
 
 
 @router.post("/dataset/import", summary="导入评测集")
-async def import_eval_dataset(request: DatasetImportRequest):
+async def import_eval_dataset(request: DatasetImportRequest, admin: CurrentUser = Depends(require_admin)):
     from ..evaluation.dataset import EvalCase, save_cases_to_db
     eval_cases = []
     for c in request.cases:
@@ -133,7 +135,7 @@ async def import_eval_dataset(request: DatasetImportRequest):
 
 
 @router.post("/compare", summary="对比两次评测结果")
-async def compare_eval_reports(eval_id_1: str, eval_id_2: str):
+async def compare_eval_reports(eval_id_1: str, eval_id_2: str, admin: CurrentUser = Depends(require_admin)):
     from ..evaluation.report import EvalReport
     r1 = await EvalReport.load_from_db(eval_id_1)
     r2 = await EvalReport.load_from_db(eval_id_2)
@@ -149,7 +151,7 @@ async def compare_eval_reports(eval_id_1: str, eval_id_2: str):
 
 
 @router.get("/dataset/stats", summary="评测集统计")
-async def get_eval_dataset_stats():
+async def get_eval_dataset_stats(admin: CurrentUser = Depends(require_admin)):
     from ..evaluation.dataset import load_cases_from_db
     cases = await load_cases_from_db()
     total = len(cases)
@@ -168,7 +170,7 @@ async def get_eval_dataset_stats():
 
 
 @router.get("/dataset/stale", summary="查看失效用例")
-async def get_stale_cases():
+async def get_stale_cases(admin: CurrentUser = Depends(require_admin)):
     from ..evaluation.dataset import load_cases_from_db
     cases = await load_cases_from_db()
     stale_cases = [c.to_dict() for c in cases if c.stale]
@@ -176,14 +178,14 @@ async def get_stale_cases():
 
 
 @router.post("/dataset/stale/{doc_id}", summary="标记指定文档的用例为失效")
-async def mark_stale_by_doc_id(doc_id: str):
+async def mark_stale_by_doc_id(doc_id: str, admin: CurrentUser = Depends(require_admin)):
     from ..evaluation.dataset import mark_stale_by_doc_db
     marked = await mark_stale_by_doc_db(doc_id)
     return {"message": f"已标记 {marked} 条用例为失效", "doc_id": doc_id}
 
 
 @router.post("/dataset/regenerate/{doc_id}", summary="重新生成指定文档的评测用例")
-async def regenerate_eval_cases(doc_id: str):
+async def regenerate_eval_cases(doc_id: str, admin: CurrentUser = Depends(require_admin)):
     from ..evaluation.dataset import load_cases_from_db, save_cases_to_db, mark_stale_by_doc_db
     from ..evaluation.case_generator import EvalCaseGenerator
     from ..core.model_config import ModelManager

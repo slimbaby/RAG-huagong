@@ -286,10 +286,14 @@ async def upload_document(
         parsed_scopes = ["general"]
 
     try:
-        content = await file.read()
+        # P0: 分块读取，超限立即停止，避免超大 body 一次性读入内存造成 OOM
         max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
-        if len(content) > max_bytes:
-            raise HTTPException(status_code=413, detail=f"文件超过大小限制 {settings.MAX_FILE_SIZE_MB}MB")
+        content = bytearray()
+        async for chunk in file.stream():
+            content.extend(chunk)
+            if len(content) > max_bytes:
+                raise HTTPException(status_code=413, detail=f"文件超过大小限制 {settings.MAX_FILE_SIZE_MB}MB")
+        content = bytes(content)
         file_hash = _compute_file_hash(content)
         checkpoint_path = _get_checkpoint_path(file_hash)
         meta = _load_metadata()
@@ -707,10 +711,14 @@ async def reupload_document(
         raise HTTPException(status_code=400, detail=f"不支持的文件类型: {file_ext}")
 
     try:
-        content = await file.read()
+        # P0: 分块读取，超限立即停止，避免超大 body 一次性读入内存造成 OOM
         max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
-        if len(content) > max_bytes:
-            raise HTTPException(status_code=413, detail=f"文件超过大小限制 {settings.MAX_FILE_SIZE_MB}MB")
+        content = bytearray()
+        async for chunk in file.stream():
+            content.extend(chunk)
+            if len(content) > max_bytes:
+                raise HTTPException(status_code=413, detail=f"文件超过大小限制 {settings.MAX_FILE_SIZE_MB}MB")
+        content = bytes(content)
         file_hash = _compute_file_hash(content)
 
         # 删除旧文件
