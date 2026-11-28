@@ -1,0 +1,2743 @@
+{
+  "source": "docs/09-面试项目答辩手册.md",
+  "created_at": "2026-11-23 18:57:47",
+  "config": {
+    "pass_score": 80,
+    "streak_to_pass": 1,
+    "pool_per_round": 1,
+    "cooldown_rounds": 0,
+    "max_long_per_round": 1,
+    "long_threshold": 200,
+    "questions_per_round": 5
+  },
+  "round": 33,
+  "current": [
+    "Q45",
+    "Q-P3",
+    "Q32",
+    "Q112",
+    "Q-M5"
+  ],
+  "pool": [
+    "Q96",
+    "Q-F3",
+    "Q30",
+    "Q50",
+    "Q-D5",
+    "Q91",
+    "Q79",
+    "Q100",
+    "Q20",
+    "Q32",
+    "Q9",
+    "Q57",
+    "Q106",
+    "Q74",
+    "Q19",
+    "Q38",
+    "Q28",
+    "Q68",
+    "Q82",
+    "Q62",
+    "Q33",
+    "Q66",
+    "Q86",
+    "Q17",
+    "Q114",
+    "Q-D3",
+    "Q71",
+    "Q44",
+    "Q-F4",
+    "Q81",
+    "Q63",
+    "Q109",
+    "Q36",
+    "Q89",
+    "Q87",
+    "Q54",
+    "Q22",
+    "Q-P12",
+    "Q6",
+    "Q113",
+    "Q26",
+    "Q35",
+    "Q46",
+    "Q13",
+    "Q-F5",
+    "Q-P1",
+    "Q21",
+    "Q75",
+    "Q88",
+    "Q59",
+    "Q42",
+    "Q-F6",
+    "Q-P2",
+    "Q73",
+    "Q-D4",
+    "Q18",
+    "Q51",
+    "Q108",
+    "Q64",
+    "Q-P5",
+    "Q8",
+    "Q115",
+    "Q72",
+    "Q25",
+    "Q61",
+    "Q16",
+    "Q80",
+    "Q4",
+    "Q107",
+    "Q10",
+    "Q70",
+    "Q60",
+    "Q39",
+    "Q95",
+    "Q53",
+    "Q90",
+    "Q67",
+    "Q-P13",
+    "Q84",
+    "Q3",
+    "Q15",
+    "Q43",
+    "Q99",
+    "Q98",
+    "Q7",
+    "Q85",
+    "Q34",
+    "Q93",
+    "Q11",
+    "Q27",
+    "Q52",
+    "Q-M14",
+    "Q-P10",
+    "Q12",
+    "Q-F2",
+    "Q116",
+    "Q78",
+    "Q41",
+    "Q105",
+    "Q111",
+    "Q58",
+    "Q55",
+    "Q-M10",
+    "Q110",
+    "Q-P4",
+    "Q83",
+    "Q-P9",
+    "Q31",
+    "Q-M8"
+  ],
+  "questions": {
+    "Q1": {
+      "title": "介绍下这个项目。",
+      "line": 14,
+      "ans_len": 93,
+      "chapter": "一、项目概览",
+      "status": "passed",
+      "history": [
+        {
+          "round": 5,
+          "score": 65,
+          "note": "平台定位与痛点入口都对、用户群更细；漏文档厚散、答案可溯源到原文页码这个核心卖点"
+        },
+        {
+          "round": 15,
+          "score": 89,
+          "note": "平台定位/痛点/可溯源都对；用户群体未点明"
+        }
+      ],
+      "streak": 1,
+      "times": 2,
+      "last_round": 15
+    },
+    "Q2": {
+      "title": "具体解决谁的什么问题？",
+      "line": 17,
+      "ans_len": 83,
+      "chapter": "一、项目概览",
+      "status": "passed",
+      "history": [
+        {
+          "round": 19,
+          "score": 92,
+          "note": "用户/三类高频场景/溯源诉求全对"
+        }
+      ],
+      "streak": 1,
+      "times": 1,
+      "last_round": 19
+    },
+    "Q3": {
+      "title": "为什么不让大模型直接答？",
+      "line": 20,
+      "ans_len": 74,
+      "chapter": "一、项目概览",
+      "status": "learning",
+      "history": [
+        {
+          "round": 25,
+          "score": 35,
+          "note": "私域答对(参考书比喻好)；漏时效权重更新不了、可追溯给出处两个原因"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 25
+    },
+    "Q4": {
+      "title": "知识库规模多大？流量多少？",
+      "line": 23,
+      "ans_len": 185,
+      "chapter": "一、项目概览",
+      "status": "learning",
+      "history": [
+        {
+          "round": 22,
+          "score": 42,
+          "note": "数字量级对；漏不背死数字+增长方式、增量入库按doc_id删旧写新、峰值个位数、瓶颈在延迟不在QPS"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 22
+    },
+    "Q5": {
+      "title": "效果怎么衡量？",
+      "line": 26,
+      "ans_len": 210,
+      "chapter": "一、项目概览",
+      "status": "passed",
+      "history": [
+        {
+          "round": 4,
+          "score": 20,
+          "note": "答成工程监控指标；漏离线评测集/线上赞踩、RAGAS三指标+六维judge、7分门禁、badcase回流"
+        },
+        {
+          "round": 8,
+          "score": 68,
+          "note": "六维+RAGAS+7分门禁+badcase回流对；漏线上赞踩转人工、评测集怎么攒"
+        },
+        {
+          "round": 17,
+          "score": 84,
+          "note": "离线评测集/线上赞踩转人工/7分门禁/badcase回流都对；评测集怎么攒与百条量级稍弱"
+        }
+      ],
+      "streak": 1,
+      "times": 3,
+      "last_round": 17
+    },
+    "Q6": {
+      "title": "你在项目里负责什么？",
+      "line": 29,
+      "ans_len": 173,
+      "chapter": "一、项目概览",
+      "status": "learning",
+      "history": [
+        {
+          "round": 13,
+          "score": 18,
+          "note": "只说前端页面与Agent层；漏年限/驻场/痛点起因/主导范围与时间节点/端到端收尾"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 13
+    },
+    "Q7": {
+      "title": "一次提问从进来到出答案，经过哪些环节？",
+      "line": 36,
+      "ans_len": 132,
+      "chapter": "二、整体链路",
+      "status": "learning",
+      "history": [
+        {
+          "round": 26,
+          "score": 55,
+          "note": "链路顺序对但关键数字全丢(20/10/5);漏截10取5、置信低降级通用、补检索为空才1轮;Q49刚背过仍踩坑"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 26
+    },
+    "Q8": {
+      "title": "七个节点分别做什么？",
+      "line": 39,
+      "ans_len": 222,
+      "chapter": "二、整体链路",
+      "status": "learning",
+      "history": [
+        {
+          "round": 20,
+          "score": 41,
+          "note": "节点顺序大致对；漏漏斗数字、比较类拆子查询、证据裁判只认空、低置信转通用"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 20
+    },
+    "Q9": {
+      "title": "节点之间怎么连？",
+      "line": 42,
+      "ans_len": 163,
+      "chapter": "二、整体链路",
+      "status": "learning",
+      "history": [
+        {
+          "round": 4,
+          "score": 25,
+          "note": "只说了add_edge；漏入口改写、三路分流、两条条件边、业务走生成内工具循环"
+        },
+        {
+          "round": 9,
+          "score": 62,
+          "note": "add_edge与三路分流都对；漏入口是改写、知识库路到证据裁判后回环、两条条件边"
+        }
+      ],
+      "streak": 0,
+      "times": 2,
+      "last_round": 9
+    },
+    "Q10": {
+      "title": "为什么拆成七个节点，一个大 prompt 不行吗？",
+      "line": 45,
+      "ans_len": 132,
+      "chapter": "二、整体链路",
+      "status": "learning",
+      "history": [
+        {
+          "round": 22,
+          "score": 62,
+          "note": "可定位、迭代拆出、延迟利大于弊答对；漏可短路、可替换两个维度"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 22
+    },
+    "Q11": {
+      "title": "拆这么细，延迟不是更高吗？",
+      "line": 48,
+      "ans_len": 105,
+      "chapter": "二、整体链路",
+      "status": "learning",
+      "history": [
+        {
+          "round": 27,
+          "score": 25,
+          "note": "答成Q10/Q68监控收益偏题；漏只有改写和生成调LLM且改写用快模型、embedding/两路并行/本地交叉编码器/纯规则、百毫秒级非多次LLM"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 27
+    },
+    "Q12": {
+      "title": "状态在节点之间怎么传？",
+      "line": 51,
+      "ans_len": 193,
+      "chapter": "二、整体链路",
+      "status": "learning",
+      "history": [
+        {
+          "round": 28,
+          "score": 30,
+          "note": "答成状态机维护统一实例太笼统;漏StateGraph绑TypedDict节点返回增量框架合并、裸dict返工接mypy、TypedDict运行时不校验靠静态检查"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 28
+    },
+    "Q13": {
+      "title": "补检索会不会死循环？",
+      "line": 54,
+      "ans_len": 83,
+      "chapter": "二、整体链路",
+      "status": "learning",
+      "history": [
+        {
+          "round": 15,
+          "score": 41,
+          "note": "不会死循环与降级对；次数说成两次、漏迭代计数置1与放行机制、无可配轮数的原因"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 15
+    },
+    "Q14": {
+      "title": "为什么有了向量检索还要 BM25？",
+      "line": 61,
+      "ans_len": 163,
+      "chapter": "三、检索与重排",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q15": {
+      "title": "RRF 是怎么算的？",
+      "line": 64,
+      "ans_len": 92,
+      "chapter": "三、检索与重排",
+      "status": "learning",
+      "history": [
+        {
+          "round": 25,
+          "score": 50,
+          "note": "1/(k+名次)公式对；漏跨路相加按总分排、名次从1开始k=60、两路都靠前分数更高；对k平滑解释错误"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 25
+    },
+    "Q16": {
+      "title": "k 为什么取 60？",
+      "line": 67,
+      "ans_len": 181,
+      "chapter": "三、检索与重排",
+      "status": "learning",
+      "history": [
+        {
+          "round": 21,
+          "score": 55,
+          "note": "论文来源+自测方向对；误说数学最优(应经验值)；漏平滑项机理、太大太小后果、重扫；自测数字与手册不符"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 21
+    },
+    "Q17": {
+      "title": "为什么不直接把两路分数加权？",
+      "line": 70,
+      "ans_len": 144,
+      "chapter": "三、检索与重排",
+      "status": "learning",
+      "history": [
+        {
+          "round": 9,
+          "score": 58,
+          "note": "量纲不可比与分数大者主导排序都对；漏归一化引入新偏差、名次天然可比只看名次"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 9
+    },
+    "Q18": {
+      "title": "重排用的是什么？和向量检索有什么本质区别？",
+      "line": 73,
+      "ans_len": 132,
+      "chapter": "三、检索与重排",
+      "status": "learning",
+      "history": [
+        {
+          "round": 18,
+          "score": 25,
+          "note": "只说关联性排序；漏bge-reranker-base、bi-encoder独立编码、交叉注意力、相关但答非所问"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 18
+    },
+    "Q19": {
+      "title": "那为什么不直接全库用交叉编码器？",
+      "line": 76,
+      "ans_len": 139,
+      "chapter": "三、检索与重排",
+      "status": "learning",
+      "history": [
+        {
+          "round": 6,
+          "score": 60,
+          "note": "成本不可行对；漏20/20→RRF10→top5漏斗、重排上限按上下文预算与延迟倒推"
+        },
+        {
+          "round": 21,
+          "score": 45,
+          "note": "百万级成本+延迟不可行对；漏两路20→RRF10→top5漏斗与重排上限按预算/延迟倒推(与第6轮同漏点)"
+        }
+      ],
+      "streak": 0,
+      "times": 2,
+      "last_round": 21
+    },
+    "Q20": {
+      "title": "置信度阈值 0.10 是不是太低了？",
+      "line": 79,
+      "ans_len": 181,
+      "chapter": "三、检索与重排",
+      "status": "learning",
+      "history": [
+        {
+          "round": 3,
+          "score": 0,
+          "note": "不知道：实测原因、两个例外、转通用的具体动作、证据裁判只补检、权限才拒全空"
+        },
+        {
+          "round": 7,
+          "score": 10,
+          "note": "只答阈值按召回调；漏交叉编码器偏低与误杀、两个例外、转通用动作、裁判只补检"
+        },
+        {
+          "round": 24,
+          "score": 30,
+          "note": "说实测调对；方向说反(应卡高误杀非太小匹配少)；漏表格短文本打分偏低、指代/逐字命中两例外、不硬拒答转通用、证据裁判补检索、权限不足才拒绝"
+        }
+      ],
+      "streak": 0,
+      "times": 3,
+      "last_round": 24
+    },
+    "Q21": {
+      "title": "reranker 挂了会怎样？",
+      "line": 82,
+      "ans_len": 62,
+      "chapter": "三、检索与重排",
+      "status": "learning",
+      "history": [
+        {
+          "round": 15,
+          "score": 59,
+          "note": "跳过精排不报错对；漏回退用向量分、阈值0.40、链路继续质量下降"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 15
+    },
+    "Q22": {
+      "title": "配置里的 0.6 和 0.4 是什么？",
+      "line": 85,
+      "ans_len": 66,
+      "chapter": "三、检索与重排",
+      "status": "learning",
+      "history": [
+        {
+          "round": 13,
+          "score": 76,
+          "note": "权重配比与对比实验用途对；漏当前生效是RRF名次融合、不走分数加权"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 13
+    },
+    "Q23": {
+      "title": "切片多大？怎么切的？",
+      "line": 88,
+      "ans_len": 114,
+      "chapter": "三、检索与重排",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q24": {
+      "title": "表格怎么处理？",
+      "line": 91,
+      "ans_len": 74,
+      "chapter": "三、检索与重排",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q25": {
+      "title": "权限怎么控制的？",
+      "line": 94,
+      "ans_len": 76,
+      "chapter": "三、检索与重排",
+      "status": "learning",
+      "history": [
+        {
+          "round": 21,
+          "score": 74,
+          "note": "入库scope/查询带权限过滤/前置大模型都对；漏越权探测告知找谁申请"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 21
+    },
+    "Q26": {
+      "title": "三路意图怎么判？",
+      "line": 101,
+      "ans_len": 44,
+      "chapter": "四、路由与工具调用",
+      "status": "learning",
+      "history": [
+        {
+          "round": 14,
+          "score": 43,
+          "note": "在改写里分类三块对；漏用快模型输出三选一、条件边按值分叉"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 14
+    },
+    "Q27": {
+      "title": "业务查询为什么不走检索？工具又是怎么调的？",
+      "line": 104,
+      "ans_len": 180,
+      "chapter": "四、路由与工具调用",
+      "status": "learning",
+      "history": [
+        {
+          "round": 27,
+          "score": 50,
+          "note": "业务vs知识库区分+意图分流对；漏注册表已接主链、白名单只读+scope+写操作不开放、避免越权与数据一致性"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 27
+    },
+    "Q28": {
+      "title": "Function Calling 的多轮循环在哪实现的？",
+      "line": 107,
+      "ans_len": 90,
+      "chapter": "四、路由与工具调用",
+      "status": "learning",
+      "history": [
+        {
+          "round": 7,
+          "score": 0,
+          "note": "不知道：生成节点内部最多2轮、注册表分发、不拆图节点的原因"
+        },
+        {
+          "round": 23,
+          "score": 40,
+          "note": "内部实现+调用次数上限方向对；漏_chat_with_tools/max_rounds=2共3次调用、注册表分发await、tool角色拼回、强制无工具chat、error回喂、没拆图节点原因；自造成本上限说法"
+        }
+      ],
+      "streak": 0,
+      "times": 2,
+      "last_round": 23
+    },
+    "Q29": {
+      "title": "为什么有两张图？",
+      "line": 110,
+      "ans_len": 136,
+      "chapter": "四、路由与工具调用",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q30": {
+      "title": "三层记忆分别是什么？",
+      "line": 117,
+      "ans_len": 192,
+      "chapter": "五、记忆",
+      "status": "learning",
+      "history": [
+        {
+          "round": 1,
+          "score": 40,
+          "note": "只答出三层名称；Redis/Milvus/工作记忆落地、存注入分离、裁剪边界全漏"
+        },
+        {
+          "round": 3,
+          "score": 54,
+          "note": "三层名对；工作记忆定位错成工具调用、短期数字60条与TTL24h不对、漏存注入分离与裁剪边界"
+        },
+        {
+          "round": 30,
+          "score": 45,
+          "note": "第1轮答过仍漏工作记忆层;短期60条/TTL24h、长期Milvus说对但无细节;漏1000token预算、存60取6轮/200字/5条、裁剪只作用prompt"
+        }
+      ],
+      "streak": 0,
+      "times": 3,
+      "last_round": 30
+    },
+    "Q31": {
+      "title": "短期为什么是 60 条？",
+      "line": 120,
+      "ans_len": 64,
+      "chapter": "五、记忆",
+      "status": "learning",
+      "history": [
+        {
+          "round": 32,
+          "score": 35,
+          "note": "编了刚上线暂定以后人多变的说法手册无;漏60条=30轮覆盖追问深度、边际收益、超长上下文注意力涣散"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 32
+    },
+    "Q32": {
+      "title": "长期记忆为什么要两级去重？",
+      "line": 123,
+      "ans_len": 115,
+      "chapter": "五、记忆",
+      "status": "learning",
+      "history": [
+        {
+          "round": 4,
+          "score": 0,
+          "note": "不知道：MD5指纹O(1)判重、向量0.85同义合并、两级互补原因全空"
+        },
+        {
+          "round": 8,
+          "score": 65,
+          "note": "MD5与0.85都对、处理方式近似；漏O(1)判重、两级互补原因"
+        }
+      ],
+      "streak": 0,
+      "times": 3,
+      "last_round": 33
+    },
+    "Q33": {
+      "title": "召回怎么排序？",
+      "line": 126,
+      "ans_len": 67,
+      "chapter": "五、记忆",
+      "status": "learning",
+      "history": [
+        {
+          "round": 8,
+          "score": 42,
+          "note": "减枝与top5对；漏相关×时间衰减×重要性公式与作用"
+        },
+        {
+          "round": 29,
+          "score": 25,
+          "note": "答成检索RRF融合,没看清是记忆章节;漏相关性×时间衰减×重要性、向量分、时间衰减退场、写入时打重要性标签、避免闲聊压过关键结论"
+        }
+      ],
+      "streak": 0,
+      "times": 2,
+      "last_round": 29
+    },
+    "Q34": {
+      "title": "为什么要 token 预算？",
+      "line": 129,
+      "ans_len": 176,
+      "chapter": "五、记忆",
+      "status": "learning",
+      "history": [
+        {
+          "round": 27,
+          "score": 32,
+          "note": "说了裁剪省token但口径偏(空转/深度思考手册无)；漏1000预算、挤掉检索内容、保最近截最长控总量、6轮/200字/5条、裁剪只作用prompt"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 27
+    },
+    "Q35": {
+      "title": "怎么证明这套系统变好了？",
+      "line": 136,
+      "ans_len": 123,
+      "chapter": "六、评测与稳定性",
+      "status": "learning",
+      "history": [
+        {
+          "round": 14,
+          "score": 41,
+          "note": "离线评测+用户反馈方向对；漏线上赞踩转人工、门禁逐条比基线0.5、badcase回流"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 14
+    },
+    "Q36": {
+      "title": "RAGAS 三个指标各衡量什么？",
+      "line": 139,
+      "ans_len": 171,
+      "chapter": "六、评测与稳定性",
+      "status": "learning",
+      "history": [
+        {
+          "round": 12,
+          "score": 20,
+          "note": "指标名两项半对（第三项误为答案相关性）；各自衡量什么、×10同量纲、百分制换算全漏"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 12
+    },
+    "Q37": {
+      "title": "LLM-as-Judge 评哪六维？",
+      "line": 142,
+      "ans_len": 51,
+      "chapter": "六、评测与稳定性",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q38": {
+      "title": "自己评自己怎么保证可信？",
+      "line": 145,
+      "ans_len": 95,
+      "chapter": "六、评测与稳定性",
+      "status": "learning",
+      "history": [
+        {
+          "round": 7,
+          "score": 35,
+          "note": "只答不同源与按维度；漏评测集可信（标准答案+来源标注+业务确认）、prompt也不同、看回归趋势"
+        },
+        {
+          "round": 26,
+          "score": 65,
+          "note": "分两模型+多维打分对;漏评测集有标准答案业务方确认非模型生成、不看单次看回归趋势;人工抽查加分"
+        }
+      ],
+      "streak": 0,
+      "times": 2,
+      "last_round": 26
+    },
+    "Q39": {
+      "title": "熔断参数是多少？",
+      "line": 148,
+      "ans_len": 62,
+      "chapter": "六、评测与稳定性",
+      "status": "learning",
+      "history": [
+        {
+          "round": 23,
+          "score": 0,
+          "note": "整题空着；纯数字题需背：连续5次失败/60秒半开/3探针/成功恢复失败重计时/窗口300秒"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 23
+    },
+    "Q40": {
+      "title": "为什么要熔断，直接重试不行吗？",
+      "line": 151,
+      "ans_len": 74,
+      "chapter": "六、评测与稳定性",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q41": {
+      "title": "降级策略有哪些？",
+      "line": 154,
+      "ans_len": 59,
+      "chapter": "六、评测与稳定性",
+      "status": "learning",
+      "history": [
+        {
+          "round": 29,
+          "score": 65,
+          "note": "向量↔BM25对、解析降级加分;漏重排不可用跳精排用向量分兜底、置信度不够降级通用;小模型备用是想当然手册无"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 29
+    },
+    "Q42": {
+      "title": "线上出问题怎么排查？",
+      "line": 157,
+      "ans_len": 127,
+      "chapter": "六、评测与稳定性",
+      "status": "learning",
+      "history": [
+        {
+          "round": 16,
+          "score": 16,
+          "note": "只答先定位；漏contextvars传trace_id、包装器开span、子span树状链"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 16
+    },
+    "Q43": {
+      "title": "怎么部署的？",
+      "line": 164,
+      "ans_len": 132,
+      "chapter": "七、部署与收尾",
+      "status": "learning",
+      "history": [
+        {
+          "round": 25,
+          "score": 15,
+          "note": "答成Q44职责边界串题；漏Docker Compose+五组件、RAGFlow按digest固定版本防latest漂移、前端Vue3"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 25
+    },
+    "Q44": {
+      "title": "大模型怎么部署的？",
+      "line": 167,
+      "ans_len": 222,
+      "chapter": "七、部署与收尾",
+      "status": "learning",
+      "history": [
+        {
+          "round": 10,
+          "score": 58,
+          "note": "边界/内网/72B+vLLM+兼容接口都对；漏验收口径与显存吞吐延迟取舍"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 10
+    },
+    "Q45": {
+      "title": "遇到过最难的一个 bug？",
+      "line": 170,
+      "ans_len": 98,
+      "chapter": "七、部署与收尾",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 1,
+      "last_round": 33
+    },
+    "Q46": {
+      "title": "如果重做会改什么？",
+      "line": 173,
+      "ans_len": 128,
+      "chapter": "七、部署与收尾",
+      "status": "learning",
+      "history": [
+        {
+          "round": 14,
+          "score": 20,
+          "note": "说checkpoint与评测机制换自研；漏评测集先行、工具循环提节点补span、切片按类型分策略"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 14
+    },
+    "Q47": {
+      "title": "时间线怎么讲？",
+      "line": 180,
+      "ans_len": 162,
+      "chapter": "八、临场提醒",
+      "status": "passed",
+      "history": [
+        {
+          "round": 13,
+          "score": 96,
+          "note": "时间线与简历口径完全对齐，转行误区也点到了"
+        }
+      ],
+      "streak": 1,
+      "times": 1,
+      "last_round": 13
+    },
+    "Q48": {
+      "title": "为什么离开怎么讲？",
+      "line": 183,
+      "ans_len": 42,
+      "chapter": "八、临场提醒",
+      "status": "passed",
+      "history": [
+        {
+          "round": 6,
+          "score": 70,
+          "note": "AI方向说对；漏最关键的一句：项目已交付上线、交团队迭代，且不能提离开"
+        },
+        {
+          "round": 22,
+          "score": 95,
+          "note": "这次补上项目已交付交团队迭代+更纯粹AI方向，全程没提离开，通过出池"
+        }
+      ],
+      "streak": 1,
+      "times": 2,
+      "last_round": 22
+    },
+    "Q49": {
+      "title": "哪些词千万别说错？",
+      "line": 186,
+      "ans_len": 134,
+      "chapter": "八、临场提醒",
+      "status": "passed",
+      "history": [
+        {
+          "round": 26,
+          "score": 100,
+          "note": "四条一字不差全中,通过出池;但提醒Q7仍漏漏斗数字,背用脱节"
+        }
+      ],
+      "streak": 1,
+      "times": 1,
+      "last_round": 26
+    },
+    "Q50": {
+      "title": "什么是熔断？三个状态怎么流转？",
+      "line": 199,
+      "ans_len": 138,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 1,
+          "score": 20,
+          "note": "只给模糊定义；三状态名称、状态流转、探针恢复全漏"
+        },
+        {
+          "round": 2,
+          "score": 5,
+          "note": "定义答成问题不向下游流转；三状态仍空白，未背上一轮短答"
+        },
+        {
+          "round": 5,
+          "score": 74,
+          "note": "三状态与流转基本成型；漏拖死整链路的目的、OPEN快速失败不发出、阈值、恢复时间窗、失败重计时"
+        },
+        {
+          "round": 16,
+          "score": 64,
+          "note": "三状态与探针对；定义反了、漏OPEN快速失败不发出、失败重计时"
+        }
+      ],
+      "streak": 0,
+      "times": 4,
+      "last_round": 16
+    },
+    "Q51": {
+      "title": "三个熔断器分别管什么？为什么按依赖拆，不做一个全局的？",
+      "line": 202,
+      "ans_len": 137,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 19,
+          "score": 0,
+          "note": "不知道：llm/milvus/bm25三个熔断器、故障域不同、同一执行器全局单例"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 19
+    },
+    "Q52": {
+      "title": "熔断打开之后，请求走什么路径？用户会收到什么？",
+      "line": 205,
+      "ans_len": 106,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 28,
+          "score": 40,
+          "note": "把打开态和半开态探针混了；抛retry_after熔断异常、上层except接住、检索空+生成兜底话术没答；用户看到质量下降非报错页答对一半"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 28
+    },
+    "Q53": {
+      "title": "什么样的异常才计入熔断？业务报错算吗？",
+      "line": 208,
+      "ans_len": 192,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 23,
+          "score": 45,
+          "note": "业务报错不算+理由对；系统故障说法太笼统，漏瞬态异常MRO名单四类名、参数解析异常立即抛、任务取消不计数"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 23
+    },
+    "Q54": {
+      "title": "半开态的探针配额怎么实现的？",
+      "line": 211,
+      "ans_len": 103,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 12,
+          "score": 0,
+          "note": "不知道：can_execute计数到3、任一成功转CLOSED清零、失败回OPEN重计时、锁内完成"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 12
+    },
+    "Q55": {
+      "title": "重试的具体参数是什么？退避曲线长什么样？",
+      "line": 214,
+      "ans_len": 120,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 30,
+          "score": 20,
+          "note": "把指数退避说成隔5秒重试1/2/4次是错的;漏3次含首次、基础1秒因子2上限30秒约1/2秒、0.5~1.5抖动、防重试风暴"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 30
+    },
+    "Q56": {
+      "title": "半开态的并发会出什么问题？你怎么修的？",
+      "line": 217,
+      "ans_len": 172,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q57": {
+      "title": "为什么同步检索路径只熔断，不加重试和超时？",
+      "line": 220,
+      "ans_len": 160,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 5,
+          "score": 15,
+          "note": "理由答成重试无意义；漏线程不可中断、超时导致线程仍占连接更糟、LLM交SDK60秒"
+        },
+        {
+          "round": 12,
+          "score": 71,
+          "note": "线程不可中断、超时只提前返回仍占连接、只熔断快速失败都对；漏LLM异步超时交SDK60秒"
+        }
+      ],
+      "streak": 0,
+      "times": 2,
+      "last_round": 12
+    },
+    "Q58": {
+      "title": "熔断状态怎么观测和干预？多实例部署怎么办？",
+      "line": 223,
+      "ans_len": 163,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 30,
+          "score": 40,
+          "note": "答成Q84日志trace定位偏题;漏运维接口(状态/统计/最近10次变迁/重置/在线改配置)、进程内内存各副本独立无共享需Redis或Sentinel、改配置只影响新建实例"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 30
+    },
+    "Q59": {
+      "title": "下游挂了，用户会看到什么？",
+      "line": 228,
+      "ans_len": 91,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 16,
+          "score": 23,
+          "note": "把最坏情况当默认；漏多数看到能用但不完美的答案、分场景降级"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 16
+    },
+    "Q60": {
+      "title": "降级一共有几层？Q41 只说了三条。",
+      "line": 231,
+      "ans_len": 132,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 23,
+          "score": 75,
+          "note": "前三层的检索/重排/生成降级答对；漏第四层解析降级RAGFlow失败回退本地解析器、漏Q41三条是前三层简化说法"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 23
+    },
+    "Q61": {
+      "title": "降级和熔断的区别？",
+      "line": 234,
+      "ans_len": 92,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 21,
+          "score": 62,
+          "note": "熔断关掉、降级备用顶上定义对；漏触发器vs兜底关系与熔断→快速失败异常→except→降级分支链路"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 21
+    },
+    "Q62": {
+      "title": "向量库挂了会怎样？为什么返回空列表而不是抛异常？",
+      "line": 237,
+      "ans_len": 138,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 8,
+          "score": 35,
+          "note": "答了入库重试与人工兜底；漏BM25单路降级、返回空而非抛异常、静默降级"
+        },
+        {
+          "round": 28,
+          "score": 45,
+          "note": "答成转通用知识答(与Q20低置信混);漏退化成BM25单路答案照出只丢语义召回、静默质量下降靠日志熔断发现;返回空vs抛异常理由对"
+        }
+      ],
+      "streak": 0,
+      "times": 2,
+      "last_round": 28
+    },
+    "Q63": {
+      "title": "向量和 BM25 同时挂了呢？",
+      "line": 240,
+      "ans_len": 119,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 11,
+          "score": 13,
+          "note": "答成FAQ兜底+人工兜底；漏返回空触发一轮补检、放行生成走通用模式不带引用"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 11
+    },
+    "Q64": {
+      "title": "大模型挂了，改写和生成分别怎么处理？",
+      "line": 243,
+      "ans_len": 101,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 19,
+          "score": 25,
+          "note": "用小模型改写对；漏异常回退原句、生成返回兜底文案并写状态、无损vs无替代品"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 19
+    },
+    "Q65": {
+      "title": "降级会不会把故障藏起来？怎么发现？",
+      "line": 246,
+      "ans_len": 137,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 16
+    },
+    "Q66": {
+      "title": "置信度不够为什么降级成通用模式，而不是直接拒答？",
+      "line": 249,
+      "ans_len": 145,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 9,
+          "score": 55,
+          "note": "检索不到≠答不了、误杀可用问题都对；漏转通用的具体动作（不注入上下文、不假装有依据、仍回答）、唯一拒是权限不足"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 9
+    },
+    "Q67": {
+      "title": "降级是局部替换还是整条重做？代价是什么？",
+      "line": 252,
+      "ans_len": 129,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 24,
+          "score": 30,
+          "note": "直接否定整条重做掉坑；只说局部替换；漏解析降级整条重做、RAGFlow部分不清理白跑、不写页级进度前端像卡住、代价是质量下降"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 24
+    },
+    "Q68": {
+      "title": "链路追踪解决什么问题？一条 trace 里有什么？",
+      "line": 257,
+      "ans_len": 102,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 7,
+          "score": 52,
+          "note": "定位慢错对、字段部分对；漏trace_id/改写问句/会话ID/状态/引用条数/token、span树"
+        },
+        {
+          "round": 27,
+          "score": 55,
+          "note": "黑盒痛点对；漏trace字段清单(trace_id/原问/改写问/会话ID/状态/答案/引用条数/token用量/span)；和日志区别答偏"
+        }
+      ],
+      "streak": 0,
+      "times": 2,
+      "last_round": 27
+    },
+    "Q69": {
+      "title": "一次问答会产出哪些 span？",
+      "line": 260,
+      "ans_len": 193,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "passed",
+      "history": [
+        {
+          "round": 2,
+          "score": 0,
+          "note": "完全不知道：span 树结构、十种类型、span 字段全空"
+        },
+        {
+          "round": 4,
+          "score": 75,
+          "note": "树状与主干全对、字段基本对；漏父子里span嵌套细分、耗时字段、火焰图用途"
+        },
+        {
+          "round": 11,
+          "score": 81,
+          "note": "树结构/主干/子节点嵌套/字段都对；漏火焰图用途与摘要口径"
+        }
+      ],
+      "streak": 1,
+      "times": 3,
+      "last_round": 11
+    },
+    "Q70": {
+      "title": "trace_id 怎么在异步链路里传下去？为什么用 contextvars？",
+      "line": 263,
+      "ans_len": 123,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 22,
+          "score": 35,
+          "note": "术语说成context；概念错误说成线程按taskID分配；把全局变量覆盖毛病安到contextvars头上；漏参数透传侵入与签名不用动；trace/task/token概念混淆"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 22
+    },
+    "Q71": {
+      "title": "span 的父子关系怎么建立？",
+      "line": 266,
+      "ans_len": 125,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 10,
+          "score": 18,
+          "note": "只说树结构；漏span栈、栈顶为父与深度、finally结算弹栈、不可变tuple"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 10
+    },
+    "Q72": {
+      "title": "trace 落盘会不会拖慢请求？",
+      "line": 269,
+      "ans_len": 107,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 20,
+          "score": 40,
+          "note": "异步落盘不阻塞对；漏请求只入队就返回、RuntimeError降级同步兜底、测试"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 20
+    },
+    "Q73": {
+      "title": "并发下 trace 上下文为什么会串？你怎么防的？有测试吗？",
+      "line": 272,
+      "ans_len": 193,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 18,
+          "score": 0,
+          "note": "不知道：全局变量并发覆盖串trace、contextvars+不可变栈、并发测试断言"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 18
+    },
+    "Q74": {
+      "title": "摘要和详情为什么拆成两个文件？",
+      "line": 275,
+      "ans_len": 137,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 6,
+          "score": 40,
+          "note": "读放大方向对；漏摘要按天jsonl不含span截200字、详情单独文件按ID打开、旧格式兜底"
+        },
+        {
+          "round": 18,
+          "score": 40,
+          "note": "读放大与全量扫对；漏摘要jsonl不含span截200字、详情按ID打开、旧格式兜底"
+        }
+      ],
+      "streak": 0,
+      "times": 2,
+      "last_round": 18
+    },
+    "Q75": {
+      "title": "没接 OpenTelemetry，算不算硬伤？",
+      "line": 278,
+      "ans_len": 137,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 16,
+          "score": 46,
+          "note": "定性对；漏自建好处与代价、边界（多服务换OTel）"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 16
+    },
+    "Q76": {
+      "title": "什么是质量门禁？",
+      "line": 283,
+      "ans_len": 73,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q77": {
+      "title": "门禁什么时候跑？不通过会怎样？",
+      "line": 286,
+      "ans_len": 127,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q78": {
+      "title": "门禁卡哪几条线？",
+      "line": 289,
+      "ans_len": 160,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 29,
+          "score": 30,
+          "note": "答成Q79六维指标(任务完成率/工具准确率/成本);漏五条线数字(总分≥7/幻觉≥7/引用≥6/失败0/无单条回归)、10分制与简历×10换算、前四绝对第五相对"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 29
+    },
+    "Q79": {
+      "title": "单条用例的总分怎么算？",
+      "line": 292,
+      "ans_len": 131,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 3,
+          "score": 0,
+          "note": "不知道：六维权重与RAGAS三项权重、加权除总权重、0-10分全空"
+        },
+        {
+          "round": 6,
+          "score": 45,
+          "note": "六维+RAGAS三项加权对；漏具体权重、除总权重得0-10、幻觉权重最高原因"
+        },
+        {
+          "round": 20,
+          "score": 42,
+          "note": "六维+RAGAS三项加权骨架对；漏具体权重、除总权重得0-10、幻觉最高原因"
+        }
+      ],
+      "streak": 0,
+      "times": 3,
+      "last_round": 20
+    },
+    "Q80": {
+      "title": "回归检测怎么做的？",
+      "line": 295,
+      "ans_len": 89,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 21,
+          "score": 35,
+          "note": "答成badcase回流+上线前回归闭环(属Q5/Q35)；漏基线逐条比分数、-0.5阈值、列ID/旧分/新分/差值"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 21
+    },
+    "Q81": {
+      "title": "门禁和线上监控是什么关系？",
+      "line": 298,
+      "ans_len": 112,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 11,
+          "score": 53,
+          "note": "发布前vs发布后定位对；线上缺赞踩比/转人工率，回流连接点全漏"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 11
+    },
+    "Q82": {
+      "title": "LLM 评分指标自己失败了，分数怎么算？",
+      "line": 301,
+      "ans_len": 143,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 8,
+          "score": 55,
+          "note": "剔除维度不算0不算满分对；漏failed标记与权重归一化、失败列表"
+        },
+        {
+          "round": 32,
+          "score": 75,
+          "note": "剔除维度结论对;漏failed标记+占位分、汇总跳过不写权重表、剩余维度权重重新归一化、失败原因记报告;不误判不放水隐含"
+        }
+      ],
+      "streak": 0,
+      "times": 2,
+      "last_round": 32
+    },
+    "Q83": {
+      "title": "门禁阈值 7.0 / 6.0 怎么定的？定错了会怎样？",
+      "line": 304,
+      "ans_len": 151,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 32,
+          "score": 45,
+          "note": "说按效果调但没给评测集分布标定法;漏引用6因纯规则格式敏感卡7误杀、定太高门禁被关掉就死了、跟评测集演进"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 32
+    },
+    "Q84": {
+      "title": "门禁通过但线上效果变差，怎么定位？",
+      "line": 307,
+      "ans_len": 171,
+      "chapter": "九、工程完整度进阶（三档问答）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 24,
+          "score": 30,
+          "note": "只答badcase回流最后一步；漏用trace倒推、按时间筛拐点、火焰图看span error、看输入输出判改写/召回/重排、让离线复现"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 24
+    },
+    "Q-P1": {
+      "title": "Python 里怎么实现一个异步任务？",
+      "line": 334,
+      "ans_len": 212,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 15,
+          "score": 23,
+          "note": "只答asyncio；漏BackgroundTasks、Celery+Redis、to_thread避坑"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 15
+    },
+    "Q-P2": {
+      "title": "多线程（threading）和多进程（multiprocessing）怎么选？",
+      "line": 337,
+      "ans_len": 111,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 18,
+          "score": 43,
+          "note": "共享状态与IPC差异对；漏GIL、I/O与CPU密集的选型结论"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 18
+    },
+    "Q-P3": {
+      "title": "可变对象和不可变对象有什么区别？",
+      "line": 340,
+      "ans_len": 113,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 1,
+      "last_round": 33
+    },
+    "Q-P4": {
+      "title": "函数传参是值传递还是引用传递？",
+      "line": 343,
+      "ans_len": 73,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 31,
+          "score": 30,
+          "note": "答引用传递+改内容外部变半对;漏重新赋值只改局部指向外部不变这个必追问点、可变不可变对象区别;经典误区没划清"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 31
+    },
+    "Q-P5": {
+      "title": "`def f(lst=[])` 为什么是 bug？",
+      "line": 346,
+      "ans_len": 95,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 20,
+          "score": 59,
+          "note": "根因与共用列表污染都对；漏默认值设None、函数内新建的解法"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 20
+    },
+    "Q-P6": {
+      "title": "深浅拷贝的区别？",
+      "line": 349,
+      "ans_len": 147,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-P7": {
+      "title": "`*args` 和 `**kwargs` 是什么？",
+      "line": 352,
+      "ans_len": 101,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-P8": {
+      "title": "list / tuple / set / dict 的区别与复杂度？",
+      "line": 355,
+      "ans_len": 192,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-P9": {
+      "title": "什么是闭包？",
+      "line": 358,
+      "ans_len": 119,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 32,
+          "score": 55,
+          "note": "内外函数+留住变量对;漏__closure__属性名、正常局部变量跑完就回收的对比;不能垃圾回收说法不够准"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 32
+    },
+    "Q-P10": {
+      "title": "装饰器的本质是什么？怎么识别？",
+      "line": 361,
+      "ans_len": 172,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 28,
+          "score": 25,
+          "note": "本质答成预制类是错的;漏my_func=something(my_func)等价式;识别三条只答到紧跟def一条;与Q93同一知识点仍答砸"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 28
+    },
+    "Q-P11": {
+      "title": "GIL 是什么？多线程能不能并行？怎么绕？",
+      "line": 364,
+      "ans_len": 198,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-P12": {
+      "title": "协程、事件循环、async/await 的原理？",
+      "line": 367,
+      "ans_len": 115,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 13,
+          "score": 46,
+          "note": "async def只创建不执行、await交还控制权都对；漏IO就绪恢复、单线程协作式非并行、不能同步阻塞"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 13
+    },
+    "Q-P13": {
+      "title": "`asyncio.create_task` 有什么坑？",
+      "line": 370,
+      "ans_len": 228,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 24,
+          "score": 0,
+          "note": "整题空着；需背弱引用被GC、异常静默丢失、模块级set+add_done_callback读t.exception()、chat.py _spawn_background"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 24
+    },
+    "Q85": {
+      "title": "什么是单例模式？这个项目里有几种实现？",
+      "line": 375,
+      "ans_len": 185,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 26,
+          "score": 40,
+          "note": "单例定义对;说成解决并发问题偏了;漏get_deps模块级、get_settings无参lru_cache机理、asyncio.Lock临界区防多个AsyncSqliteSaver"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 26
+    },
+    "Q86": {
+      "title": "三种单例怎么选？核心判断是什么？",
+      "line": 378,
+      "ans_len": 148,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 9,
+          "score": 0,
+          "note": "不知道：判据是初始化要不要await，同步用模块变量/lru_cache，异步用asyncio.Lock"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 9
+    },
+    "Q87": {
+      "title": "`@lru_cache()` 为什么能当单例用？",
+      "line": 381,
+      "ans_len": 179,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 12,
+          "score": 38,
+          "note": "缓存命中原理对；漏无参所以永远命中、只创建一次、同步初始化前提"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 12
+    },
+    "Q88": {
+      "title": "`asyncio.Lock` 单例那一段（checkpointer.py）在防什么？",
+      "line": 384,
+      "ans_len": 177,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 16,
+          "score": 0,
+          "note": "不知道：并发首次调用多连接、AsyncSqliteSaver起后台线程、Lock包临界区"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 16
+    },
+    "Q89": {
+      "title": "`threading.local` 和 `ContextVar` 有什么区别？",
+      "line": 389,
+      "ans_len": 184,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 12,
+          "score": 0,
+          "note": "不知道：按线程vs按Task、create_task复制上下文、异步同线程会互相覆盖"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 12
+    },
+    "Q90": {
+      "title": "项目里 ContextVar 具体用在哪？",
+      "line": 392,
+      "ans_len": 166,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 24,
+          "score": 35,
+          "note": "方向对(隔离防覆盖)但漏logging_context三ID与tracer两变量两处位置、threading.local串号历史、并发用例；又说线程内，asyncio应按Task隔离"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 24
+    },
+    "Q91": {
+      "title": "`ContextVar.set()` 为什么返回 token？",
+      "line": 395,
+      "ans_len": 203,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 2,
+          "score": 12,
+          "note": "隔离结论对但主体错；把token答成流式token，漏层级回滚与span栈"
+        },
+        {
+          "round": 5,
+          "score": 52,
+          "note": "task隔离与排除并发误解已对；token的层级回滚定位仍模糊、漏reset与tryfinally、span栈实例"
+        },
+        {
+          "round": 13,
+          "score": 48,
+          "note": "排除并发误解与层级回滚都对；漏reset(token)+try/finally、span栈实例"
+        }
+      ],
+      "streak": 0,
+      "times": 3,
+      "last_round": 13
+    },
+    "Q92": {
+      "title": "100 个请求进来，是不是就有 100 个空盒子？",
+      "line": 398,
+      "ans_len": 224,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q93": {
+      "title": "分享一个装饰器、生成器、上下文管理器的实际用法。",
+      "line": 403,
+      "ans_len": 215,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 27,
+          "score": 20,
+          "note": "装饰器答成提前封装、生成器答成字典推导式(与yield无关)、上下文管理器不清楚；全漏项目三实例与三者串讲"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 27
+    },
+    "Q94": {
+      "title": "生成器的 `return` 值，调用方怎么拿到？",
+      "line": 406,
+      "ans_len": 188,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q95": {
+      "title": "日志送给模型前怎么裁剪？关键报错被删了怎么找回？",
+      "line": 409,
+      "ans_len": 177,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 23,
+          "score": 35,
+          "note": "答成日志怎么传模型；漏裁剪三原则与messages[-12:]/content[:200]/长期5条/1000token；关键报错从trace捞方向对但没说details机制"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 23
+    },
+    "Q96": {
+      "title": "什么时候适合用 asyncio？协程里调阻塞接口会怎样？",
+      "line": 414,
+      "ans_len": 149,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 1,
+          "score": 55,
+          "note": "误说所有线程被阻塞；漏事件循环机制、I/O实例、to_thread落地"
+        },
+        {
+          "round": 4,
+          "score": 64,
+          "note": "阻塞事件循环已说对；漏单线程千级并发与退化串行、I/O实例、Milvus删除丢线程池"
+        },
+        {
+          "round": 10,
+          "score": 78,
+          "note": "I/O密集、to_thread场景都对；机制说成阻塞线程而非事件循环、漏LLM实例"
+        }
+      ],
+      "streak": 0,
+      "times": 3,
+      "last_round": 10
+    },
+    "Q97": {
+      "title": "补丁怎么验收？原测试过了，怎么确认没引入回归？",
+      "line": 419,
+      "ans_len": 190,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q98": {
+      "title": "定位和修复用不同模型时，两边怎么交接？输出对不上怎么办？",
+      "line": 422,
+      "ans_len": 167,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 26,
+          "score": 35,
+          "note": "答成单次输入输出schema+Pydantic校验,非两模型交接;漏四交付物、上下文压缩丢失、修复模型先复述、多Agent状态传递本质"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 26
+    },
+    "Q99": {
+      "title": "故障没打日志时，从哪里找线索？",
+      "line": 425,
+      "ans_len": 176,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 25,
+          "score": 25,
+          "note": "逻辑自相矛盾(没日志又说去全量日志找)；漏trace输入输出/span耗时、记忆JSONL/checkpoint/state快照、外部日志与重跑复现、可观测性前置立论；结尾重复两遍"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 25
+    },
+    "Q100": {
+      "title": "补丁能跑但不符合代码规范，在哪一步拦？",
+      "line": 428,
+      "ans_len": 155,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 3,
+          "score": 0,
+          "note": "不知道：静态检查→pre-commit→CI→CR 四层、规范前置到生成阶段全空"
+        },
+        {
+          "round": 7,
+          "score": 25,
+          "note": "只答越前置越便宜；漏四层拦截与工具、规范前置到生成阶段"
+        },
+        {
+          "round": 25,
+          "score": 20,
+          "note": "只答越前置越便宜原则；漏四层拦截ruff/precommit/CI/CodeReview、漏规范前置到生成补丁读CLAUDE.md"
+        }
+      ],
+      "streak": 0,
+      "times": 3,
+      "last_round": 25
+    },
+    "Q101": {
+      "title": "常见的内部问题怎么答？什么时候值得单独做个问答模型？",
+      "line": 431,
+      "ans_len": 156,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "passed",
+      "history": [
+        {
+          "round": 1,
+          "score": 30,
+          "note": "口径反了：说成FAQ直返不走检索；漏RAG优先与上微调的触发条件、标注数据前提"
+        },
+        {
+          "round": 2,
+          "score": 82,
+          "note": "口径已修正：优先RAG+成本与重新切片；漏四类触发条件细节与足够标注数据前提"
+        }
+      ],
+      "streak": 1,
+      "times": 2,
+      "last_round": 2
+    },
+    "Q102": {
+      "title": "只给你一周优化这个系统，先改哪里？怎么验证？",
+      "line": 434,
+      "ans_len": 176,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q103": {
+      "title": "你怎么理解 Harness？这个项目里模型和外层程序各管什么？",
+      "line": 437,
+      "ans_len": 189,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q104": {
+      "title": "线上有没有修失败过？举个例子，说说怎么排查的？",
+      "line": 440,
+      "ans_len": 207,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q105": {
+      "title": "你了解 Claude Code 的沙箱吗？放到这个项目里，文件和命令权限怎么划？",
+      "line": 443,
+      "ans_len": 218,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 30,
+          "score": 25,
+          "note": "沙箱说成防报错覆盖数据错;漏有副作用操作默认请求授权、文件/命令/网络密钥三块权限划分、与allowed_doc_ids同思路"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 30
+    },
+    "Q106": {
+      "title": "什么是 RAG？相比纯生成模型有什么优势？",
+      "line": 448,
+      "ans_len": 115,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 5,
+          "score": 62,
+          "note": "定义与私域接入都对；漏不用重训的更新优势、答案可溯源到原文段落"
+        },
+        {
+          "round": 14,
+          "score": 76,
+          "note": "定义/私域/更新重切/成本都对；漏答案可溯源到原文段落"
+        }
+      ],
+      "streak": 0,
+      "times": 2,
+      "last_round": 14
+    },
+    "Q107": {
+      "title": "主流向量数据库 Faiss / Pinecone / Milvus 各有什么特点？怎么选型？",
+      "line": 451,
+      "ans_len": 287,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 22,
+          "score": 30,
+          "note": "说另外两个不熟悉是硬伤；自造Milvus M3版本名；漏Faiss/Pinecone定位、RBAC按doc_id过滤真实理由、三句口诀"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 22
+    },
+    "Q108": {
+      "title": "大模型幻觉有哪些常见类型？举例说明。",
+      "line": 454,
+      "ans_len": 155,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 19,
+          "score": 38,
+          "note": "三类幻觉都沾边；漏来源幻觉（引用不支持结论）与化工场景最危险两类"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 19
+    },
+    "Q109": {
+      "title": "设计一个多源知识库的 RAG 系统，核心组件和架构怎么考虑？",
+      "line": 457,
+      "ans_len": 222,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 11,
+          "score": 5,
+          "note": "答成多Agent协作；六层架构、跨源权重、权限隔离与跨源去重全空"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 11
+    },
+    "Q110": {
+      "title": "手写：无重复字符的最长子串长度。",
+      "line": 462,
+      "ans_len": 67,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 31,
+          "score": 30,
+          "note": "只说滑动窗口没写可跑代码(连续第二道手写题只说思路);漏哈希表O(n)、双指针收缩、last字典实现"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 31
+    },
+    "Q111": {
+      "title": "手写：m×n 网格最小路径和（左上到右下）。",
+      "line": 480,
+      "ans_len": 120,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 30,
+          "score": 35,
+          "note": "方向对(DP右下);但没写代码只描述思路,手写题必须给可跑代码;漏dp定义与首行首列初始化"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 30
+    },
+    "Q112": {
+      "title": "一个典型的 Agent 架构包含哪些核心组件？各组件的作用和交互？",
+      "line": 502,
+      "ans_len": 196,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 1,
+      "last_round": 33
+    },
+    "Q113": {
+      "title": "多 Agent 协同会遇到哪些挑战？怎么解决冲突或循环依赖？",
+      "line": 505,
+      "ans_len": 187,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 14,
+          "score": 44,
+          "note": "三个挑战基本对、重试上限意识好；漏单一数据源+消息协议、DAG化与仲裁、上下文压缩丢失、核心思路总结"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 14
+    },
+    "Q114": {
+      "title": "LangGraph 相比 LangChain 的传统链，在状态管理和记忆方面有什么优势？",
+      "line": 508,
+      "ans_len": 225,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 9,
+          "score": 5,
+          "note": "把LangGraph当成ReAct反思循环；传统链痛点、显式状态、条件边循环、checkpoint与interrupt全空"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 9
+    },
+    "Q115": {
+      "title": "Agent 开发中如何对底层大模型调优？微调、Prompt 工程、RAG 怎么结合？",
+      "line": 511,
+      "ans_len": 199,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 20,
+          "score": 53,
+          "note": "Prompt/RAG/微调各自适用场景大致对；漏叠加关系、微调要标注数据、迭代顺序与项目当前状态"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 20
+    },
+    "Q116": {
+      "title": "如何用 Redis 缓存频繁访问的 prompt 模板或中间结果？注意什么？",
+      "line": 516,
+      "ans_len": 171,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "learning",
+      "history": [
+        {
+          "round": 29,
+          "score": 0,
+          "note": "整题空着;需背模板重版本(key模板名+版本号改了失效)、中间结果重TTL和失效(query hash/短TTL/入库删除主动失效/序列化/防穿透击穿)"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 29
+    },
+    "Q117": {
+      "title": "如何评估技术风险并保证 Agent 项目的进度和质量？",
+      "line": 519,
+      "ans_len": 149,
+      "chapter": "十、Python 语言特性与工程实践",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-F1": {
+      "title": "简历写 Vue3，现在这个项目用 React，怎么讲？",
+      "line": 530,
+      "ans_len": 195,
+      "chapter": "十一、简历专项追问（前端经历 + 链路深挖）",
+      "status": "passed",
+      "history": [
+        {
+          "round": 10,
+          "score": 92,
+          "note": "两时期两项目、Vue与React各自理由全对；漏共用后端接口与权限体系、不说成迁移"
+        }
+      ],
+      "streak": 1,
+      "times": 1,
+      "last_round": 10
+    },
+    "Q-F2": {
+      "title": "可视化大屏怎么做的？ECharts 组件和主题配色怎么设计？",
+      "line": 533,
+      "ans_len": 191,
+      "chapter": "十一、简历专项追问（前端经历 + 链路深挖）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 29,
+          "score": 20,
+          "note": "答成公司低代码拖拽像Dify扣子,否认自己技术含量是硬伤;漏配置化组件管resize/loading/空态/销毁、主题token+registerTheme、基准画布等比缩放rem/vw、tooltip偏按缩放比换算"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 29
+    },
+    "Q-F3": {
+      "title": "OpenLayers 资源上图怎么做的？点位聚合、图层切换、热力图各解决什么？",
+      "line": 536,
+      "ans_len": 177,
+      "chapter": "十一、简历专项追问（前端经历 + 链路深挖）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 1,
+          "score": 45,
+          "note": "三块都浅；热力图说成程度展示；漏VectorLayer/visible、Cluster密度重算与下钻、坐标系投影"
+        },
+        {
+          "round": 3,
+          "score": 55,
+          "note": "热力图与坐标转换都提到了；漏visible开关与干扰、按密度重算与下钻、坐标转换归错到图层切换"
+        },
+        {
+          "round": 31,
+          "score": 50,
+          "note": "VectorLayer方向对;聚合说成移动计算延迟(应卡顿压盖)、图层切visible没说、热力图只说区域程度漏密度视角与权重、投影转换说成比例转换没点坐标系"
+        }
+      ],
+      "streak": 0,
+      "times": 3,
+      "last_round": 31
+    },
+    "Q-F4": {
+      "title": "WebSocket 实时推送怎么做的？断线、心跳、消息堆积怎么处理？",
+      "line": 539,
+      "ans_len": 183,
+      "chapter": "十一、简历专项追问（前端经历 + 链路深挖）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 11,
+          "score": 10,
+          "note": "把WebSocket说成SSE长连接；有断点续渲染意识；漏选型理由、退避重连与序号补发、订阅范围、节流批量、首屏HTTP"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 11
+    },
+    "Q-F5": {
+      "title": "后台管理模块承担什么？和权限、应急指挥怎么打通？",
+      "line": 542,
+      "ans_len": 167,
+      "chapter": "十一、简历专项追问（前端经历 + 链路深挖）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 15,
+          "score": 47,
+          "note": "权限标记与检索过滤对；漏模块职责清单、后端独立校验、大屏跳转、doc_id与点位ID不是一套"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 15
+    },
+    "Q-F6": {
+      "title": "前端做了两年，为什么转去做 Agent？这段经历对 RAG 项目有什么用？",
+      "line": 545,
+      "ans_len": 137,
+      "chapter": "十一、简历专项追问（前端经历 + 链路深挖）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 17,
+          "score": 8,
+          "note": "答成拥抱AI趋势；漏不是转行是业务逼过去、前端两个优势、两段同一条线"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 17
+    },
+    "Q-D1": {
+      "title": "前端火焰图具体怎么画？怎么区分\"自己慢\"还是\"下游慢\"？",
+      "line": 550,
+      "ans_len": 197,
+      "chapter": "十一、简历专项追问（前端经历 + 链路深挖）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-D2": {
+      "title": "比较类问题怎么拆子查询？并行检索的结果怎么合并？",
+      "line": 553,
+      "ans_len": 201,
+      "chapter": "十一、简历专项追问（前端经历 + 链路深挖）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-D3": {
+      "title": "长期记忆里的\"关键信息\"怎么提取？什么时候触发、成本怎么控？",
+      "line": 556,
+      "ans_len": 163,
+      "chapter": "十一、简历专项追问（前端经历 + 链路深挖）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 10,
+          "score": 8,
+          "note": "答成读路径（召回top5）；漏触发时机（会话结束/累计若干轮异步抽）、抽什么、异步不占链路、写入MD5+0.85去重"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 10
+    },
+    "Q-D4": {
+      "title": "从驻场调研到输出技术方案，中间做了什么？为什么选 RAG 不选微调？",
+      "line": 559,
+      "ans_len": 173,
+      "chapter": "十一、简历专项追问（前端经历 + 链路深挖）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 18,
+          "score": 35,
+          "note": "经济性与删旧切片重传对；漏跟岗调研归三类、数据环境三点、必须溯源、评审讲兜底"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 18
+    },
+    "Q-D5": {
+      "title": "上线后客户反馈怎么变成系统改进？知识库扩充和 Prompt 调优怎么做的？",
+      "line": 562,
+      "ans_len": 165,
+      "chapter": "十一、简历专项追问（前端经历 + 链路深挖）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 2,
+          "score": 28,
+          "note": "有反馈→用例→回归闭环；漏反馈来源、先归因四分类、补文件vs改prompt、门禁看单条回归"
+        },
+        {
+          "round": 6,
+          "score": 44,
+          "note": "反馈来源与删旧切片重切都对；仍漏先归因四分类、改prompt的适用条件、门禁看单条回归"
+        },
+        {
+          "round": 19,
+          "score": 40,
+          "note": "赞踩回流与删旧切片重切对；漏先归因四类、表达格式才动prompt、单条回归"
+        }
+      ],
+      "streak": 0,
+      "times": 3,
+      "last_round": 19
+    },
+    "Q-M1": {
+      "title": "介绍下这个多流程平台。",
+      "line": 573,
+      "ans_len": 207,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-M2": {
+      "title": "一个入园申请从头到尾走完是什么样？边界在哪？",
+      "line": 576,
+      "ans_len": 292,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-M3": {
+      "title": "为什么不给每个流程写一个工作流，或者一个 Agent？",
+      "line": 581,
+      "ans_len": 272,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-M4": {
+      "title": "这三层职责分别是什么？",
+      "line": 584,
+      "ans_len": 190,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-M5": {
+      "title": "一个流程的配置要写哪些东西？为什么是 11 段？",
+      "line": 587,
+      "ans_len": 433,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 1,
+      "last_round": 33
+    },
+    "Q-M6": {
+      "title": "这套东西的规模怎么讲？",
+      "line": 590,
+      "ans_len": 164,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "passed",
+      "history": [
+        {
+          "round": 31,
+          "score": 90,
+          "note": "报代码事实不报效果数字、一个真实流程+一份模板+十来个流程、发给其他部门测试方向对,通过出池"
+        }
+      ],
+      "streak": 1,
+      "times": 1,
+      "last_round": 31
+    },
+    "Q-M7": {
+      "title": "上传图片后「之前填的信息全没了」，怎么定位的？",
+      "line": 612,
+      "ans_len": 285,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-M8": {
+      "title": "提交后每轮回答都挂核对卡，根因是什么？",
+      "line": 615,
+      "ans_len": 368,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 32,
+          "score": 25,
+          "note": "自己亲手修的bug却答回流测试答非所问;现象/日志证据/session_keep根因/两层修法/不用槽位启发式全漏"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 32
+    },
+    "Q-M9": {
+      "title": "前端意图规则和后端不一致，最后怎么处理的？",
+      "line": 618,
+      "ans_len": 149,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-M10": {
+      "title": "配置里能写业务逻辑吗？新增流程真的零代码？",
+      "line": 623,
+      "ans_len": 184,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 31,
+          "score": 70,
+          "note": "方向对(不能写逻辑/业务层零代码/要注册工具);漏命名hook+字面量参数、三态active/deprecated/retired、取模板改11段dry-run双人发布、边界刻意留非没做完;tools/skills术语混用"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 31
+    },
+    "Q-M11": {
+      "title": "配置比代码危险，怎么防？",
+      "line": 626,
+      "ans_len": 244,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-M12": {
+      "title": "为什么不用模型做意图分类？",
+      "line": 629,
+      "ans_len": 136,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-M13": {
+      "title": "什么时候才该从单 Agent 拆成多 Agent？",
+      "line": 632,
+      "ans_len": 125,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "new",
+      "history": [],
+      "streak": 0,
+      "times": 0,
+      "last_round": 0
+    },
+    "Q-M14": {
+      "title": "这个平台有哪些没做的？",
+      "line": 635,
+      "ans_len": 200,
+      "chapter": "十二、多流程配置化平台专项（对话办理分支）",
+      "status": "learning",
+      "history": [
+        {
+          "round": 28,
+          "score": 0,
+          "note": "只答还有很多等于空着；需背五条短板:动态明细行级联字段/显式切版交互/纯陈述句按问答宁漏判不误判/意图用例无硬门槛/兼容视图90天删除需审批"
+        }
+      ],
+      "streak": 0,
+      "times": 1,
+      "last_round": 28
+    }
+  }
+}
