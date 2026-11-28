@@ -180,6 +180,7 @@ class MemoryManager:
             similar = await self._search_similar_memories(query_vector, top_k=top_k * 2)
 
             memories = []
+            scores = []
             for item in similar:
                 memory = self._memories.get(item["memory_id"])
                 if memory and not memory.expired:
@@ -191,9 +192,12 @@ class MemoryManager:
                     memory.access_count += 1
                     memory.last_accessed = time.time()
                     memories.append(memory)
+                    # 分数必须跟记忆一起过滤：按位置取 similar 的分数会让
+                    # 被跳过的项把后面记忆的分数整体错位，低相关记忆挤掉高相关记忆。
+                    scores.append(float(item.get("score", 0)))
 
             # 按综合分数排序：相关性 × 时间衰减 × 重要性
-            ranked = self._rank_memories(memories, [s["score"] for s in similar[:len(memories)]])
+            ranked = self._rank_memories(memories, scores)
 
             self._persist_memories()
             return ranked[:top_k]

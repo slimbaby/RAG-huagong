@@ -20,13 +20,40 @@ class SessionStore:
         self.password = password
         self.redis = None
         self._connected = False
+        self._last_failed_at = 0.0  # 失败后退避，避免每次请求都卡在连接超时
+        self._retry_backoff = 30.0
         # 会话归属与单会话 TTL（PII 隔离）：Redis 不可用时用进程内字典兜底
         self._session_meta_mem: Dict[str, Dict] = {}
         self._session_ttls: Dict[str, int] = {}
+        self._memory_store: Dict[str, List[Dict]] = {}
+
+    def _degrade_to_memory(self, error: Exception):
+        """Redis 不可用时切换到内存兜底，并在退避窗口后允许重连。"""
+        logger.warning(f"Redis 操作失败，切换内存兜底: {error}")
+        # 不在此处 await close()：调用方可能在同步上下文，连接池交由 GC 回收
+        self.redis = None
+        self._connected = False
+        self._last_failed_at = time.time()
+
+    def _purge_expired_memory(self):
+        """内存兜底会话按 TTL 清理，避免入园 PII 常驻内存。"""
+        now = time.time()
+        for session_id in list(self._memory_store):
+            ttl = self._session_ttls.get(session_id, self.ttl)
+            last_active = self._session_meta_mem.get(session_id, {}).get("last_active")
+            if last_active is None:
+                messages = self._memory_store.get(session_id) or []
+                last_active = messages[-1]["timestamp"] if messages else 0
+            if last_active <= 0 or now - last_active > ttl:
+                self._memory_store.pop(session_id, None)
+                self._session_meta_mem.pop(session_id, None)
+                self._session_ttls.pop(session_id, None)
 
     async def connect(self):
-        """连接 Redis"""
+        """连接 Redis（带超时与失败退避重连）"""
         if self._connected:
+            return
+        if self._last_failed_at and time.time() - self._last_failed_at < self._retry_backoff:
             return
         try:
             import redis.asyncio as aioredis
@@ -42,14 +69,15 @@ class SessionStore:
                 db=db,
                 password=password,
                 decode_responses=True,
+                socket_timeout=2.0,
+                socket_connect_timeout=2.0,
             )
             await self.redis.ping()
             self._connected = True
+            self._last_failed_at = 0.0
             logger.info(f"Redis连接成功: {host}:{port}/{db}")
         except Exception as e:
-            logger.warning(f"Redis连接失败: {e}，将使用内存存储")
-            self.redis = None
-            self._connected = True  # 标记已尝试连接，避免重复尝试
+            self._degrade_to_memory(e)
 
     def _session_key(self, session_id: str) -> str:
         return f"session:{session_id}:messages"
@@ -76,7 +104,7 @@ class SessionStore:
                 })
                 await self.redis.expire(self._session_meta_key(session_id), effective)
             except Exception as e:
-                logger.error(f"Redis绑定会话归属失败: {e}")
+                self._degrade_to_memory(e)
 
     async def get_owner(self, session_id: str) -> str:
         """返回会话归属用户名；历史会话无归属时返回空串（调用方按拒绝处理）。"""
@@ -85,7 +113,7 @@ class SessionStore:
             try:
                 return await self.redis.hget(self._session_meta_key(session_id), "owner") or ""
             except Exception as e:
-                logger.error(f"Redis读取会话归属失败: {e}")
+                self._degrade_to_memory(e)
         return self._session_meta_mem.get(session_id, {}).get("owner", "")
 
     async def _effective_ttl(self, session_id: str) -> int:
@@ -102,6 +130,7 @@ class SessionStore:
                           citations: list = None, metadata: dict = None):
         """追加一条消息到会话"""
         await self.connect()
+        self._purge_expired_memory()
         message = {
             "role": role,
             "content": content,
@@ -132,19 +161,17 @@ class SessionStore:
                 pipe.expire(meta_key, ttl)
                 await pipe.execute()
             except Exception as e:
-                logger.error(f"Redis写入失败: {e}")
-        else:
-            # 内存回退（无 Redis 时）
-            if not hasattr(self, '_memory_store'):
-                self._memory_store = {}
-            if session_id not in self._memory_store:
-                self._memory_store[session_id] = []
-            self._memory_store[session_id].append(message)
+                self._degrade_to_memory(e)
+        if not self.redis:
+            # 内存回退（无 Redis 时或 Redis 刚降级）
+            self._memory_store.setdefault(session_id, []).append(message)
             self._memory_store[session_id] = self._memory_store[session_id][-self.max_messages:]
+            self._session_meta_mem.setdefault(session_id, {})["last_active"] = message["timestamp"]
 
     async def get_messages(self, session_id: str, limit: int = 60) -> List[Dict]:
         """获取会话的最近 N 条消息"""
         await self.connect()
+        self._purge_expired_memory()
         key = self._session_key(session_id)
 
         if self.redis:
@@ -152,12 +179,8 @@ class SessionStore:
                 raw_messages = await self.redis.lrange(key, -limit, -1)
                 return [json.loads(m) for m in raw_messages]
             except Exception as e:
-                logger.error(f"Redis读取失败: {e}")
-                return []
-        else:
-            if not hasattr(self, '_memory_store'):
-                self._memory_store = {}
-            return self._memory_store.get(session_id, [])[-limit:]
+                self._degrade_to_memory(e)
+        return self._memory_store.get(session_id, [])[-limit:]
 
     async def clear_session(self, session_id: str):
         """清空会话"""
@@ -169,16 +192,15 @@ class SessionStore:
             try:
                 await self.redis.delete(key, meta_key)
             except Exception as e:
-                logger.error(f"Redis删除失败: {e}")
-        else:
-            if hasattr(self, '_memory_store') and session_id in self._memory_store:
-                del self._memory_store[session_id]
+                self._degrade_to_memory(e)
+        self._memory_store.pop(session_id, None)
         self._session_meta_mem.pop(session_id, None)
         self._session_ttls.pop(session_id, None)
 
     async def list_sessions(self, limit: int = 50, owner: str = None) -> List[Dict]:
         """列出最近的会话；传入 owner 时只返回该用户的会话。"""
         await self.connect()
+        self._purge_expired_memory()
 
         if self.redis:
             try:
@@ -208,11 +230,8 @@ class SessionStore:
                 sessions.sort(key=lambda s: s["last_active"], reverse=True)
                 return sessions[:limit]
             except Exception as e:
-                logger.error(f"Redis列出会话失败: {e}")
-                return []
-        else:
-            if not hasattr(self, '_memory_store'):
-                return []
+                self._degrade_to_memory(e)
+        if not self.redis:
             sessions = []
             for sid, msgs in self._memory_store.items():
                 session_owner = self._session_meta_mem.get(sid, {}).get("owner", "")
@@ -231,13 +250,13 @@ class SessionStore:
     async def get_session_count(self) -> int:
         """获取会话总数"""
         await self.connect()
+        self._purge_expired_memory()
         if self.redis:
             try:
                 count = 0
                 async for _ in self.redis.scan_iter("session:*:meta", count=100):
                     count += 1
                 return count
-            except Exception:
-                return 0
-        else:
-            return len(getattr(self, '_memory_store', {}))
+            except Exception as e:
+                self._degrade_to_memory(e)
+        return len(self._memory_store)

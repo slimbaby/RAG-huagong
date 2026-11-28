@@ -252,5 +252,8 @@ async def get_redis():
     global _redis
     if _redis is None:
         import redis.asyncio as aioredis
-        _redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        _redis = aioredis.from_url(
+            settings.REDIS_URL, decode_responses=True,
+            socket_timeout=2.0, socket_connect_timeout=2.0,
+        )
     return _redis

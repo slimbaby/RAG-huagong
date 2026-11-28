@@ -600,7 +600,7 @@ async def chat_query(request: ChatRequest, user: CurrentUser = Depends(get_curre
                 trace_id=trace_id,
                 answer=answer_text,
                 sources_count=len(citations_raw),
-                status="ok",
+                status=_trace_status(result, answer_text),
             )
 
         # 保存对话到短期记忆；入园通道关闭长期记忆抽取（PII 不进全局记忆池）
@@ -705,6 +705,18 @@ def _build_initial_state(
         "flow_slots": dict(flow_slots or entry_slots or {}),
         "flow_payload": {},
     }
+
+
+_DEGRADED_ANSWERS = (
+    "生成回答时出现错误", "LLM服务未配置", "服务处理失败", "无法生成回答",
+)
+
+
+def _trace_status(result: Dict, answer: str) -> str:
+    """图节点把检索/生成失败吞成降级文案返回，不能一律记 ok。"""
+    if result.get("error") or any(marker in (answer or "") for marker in _DEGRADED_ANSWERS):
+        return "error"
+    return "ok"
 
 
 def _format_citations(citations_raw: List) -> List[CitationInfo]:
@@ -865,7 +877,7 @@ async def chat_query_stream(request: ChatRequest, user: CurrentUser = Depends(ge
                     trace_id=trace_id,
                     answer=answer_text,
                     sources_count=len(citations_raw),
-                    status="ok",
+                    status=_trace_status(accumulated_state, answer_text),
                 )
 
             # 保存对话到短期记忆；入园通道关闭长期记忆抽取（PII 不进全局记忆池）

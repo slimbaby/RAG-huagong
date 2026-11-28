@@ -361,11 +361,12 @@ async def _chat_with_tools(llm_client, messages, tools_schema, tool_registry, ma
                 output = json.dumps({"error": f"未知工具 {fn_name}"}, ensure_ascii=False)
             else:
                 try:
-                    # 工具可能是 async（如 workflow 下单），也可能是普通同步函数
+                    # 工具可能是 async（如 workflow 下单），也可能是普通同步函数。
+                    # 同步工具多为文件/数据库 I/O，放到线程执行，避免阻塞事件循环。
                     if inspect.iscoroutinefunction(fn):
                         output = await fn(**args)
                     else:
-                        output = fn(**args)
+                        output = await asyncio.to_thread(fn, **args)
                 except Exception as e:
                     output = json.dumps({"error": str(e)}, ensure_ascii=False)
             logger.info(f"[tool_loop] {fn_name}({args}) -> {str(output)[:120]}")
@@ -631,7 +632,9 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # ── 反思教训注入：系统级无条件 + 会话级按 session 召回 ──
     # 教训是"行为准则"，与长期记忆/参考资料分属不同语义位，单独成段
     lesson_text = "（无）"
-    if lesson_store:
+    # 评测请求（session_id 由 EvalRunner 以 eval_ 开头生成）不注入反思教训，
+    # 否则上一批评测写入的系统级教训会污染后续批次，A/B 分数不可比。
+    if lesson_store and not session_id.startswith("eval_"):
         try:
             lesson_text = lesson_store.build_lesson_text(session_id=session_id)
         except Exception as e:
@@ -660,7 +663,11 @@ async def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     try:
-        use_general = (intent in ("general", "business_query")) or (not retrieval_confident and not tool_registry)
+        # 空证据 + 低置信度必须走通用兜底。此前条件含 `not tool_registry`，
+        # 而工具注册表恒非空，导致补检索后仍为空时又套上知识库强约束 prompt。
+        use_general = (intent in ("general", "business_query")) or (
+            not retrieval_confident and not filtered_results
+        )
 
         if use_general:
             kb_context = ""
@@ -879,14 +886,16 @@ async def check_retrieval_confidence_node(state: Dict[str, Any]) -> Dict[str, An
     """节点: 检查检索置信度，低置信度时标记为兜底"""
     filtered_results = state.get("filtered_results", [])
 
+    # 空结果必须先判：补检索轮次也不能把「仍然没有证据」误标为高置信度，
+    # 否则 generate 会带着空 context 走知识库强约束 prompt，抬高编造概率。
+    if not filtered_results:
+        logger.info("[check_retrieval_confidence] 无检索结果，标记为低置信度")
+        return {"retrieval_confident": False}
+
     # 迭代补检索轮次：由充分性评估决定是否继续，不再降级通用模式
     if state.get("iteration_count", 0) > 0:
         logger.info(f"[check_retrieval_confidence] 迭代第{state['iteration_count']}轮，跳过低置信度降级")
         return {"retrieval_confident": True}
-
-    if not filtered_results:
-        logger.info("[check_retrieval_confidence] 无检索结果，标记为低置信度")
-        return {"retrieval_confident": False}
 
     # 优先用 reranker 分数（交叉编码器，语义判断更准）
     # 回退到向量分数（reranker 不可用时）
